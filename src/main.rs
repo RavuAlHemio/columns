@@ -1,10 +1,12 @@
 mod model;
 
 
+use std::collections::{BTreeSet, VecDeque};
 use std::thread::sleep;
 use std::time::Duration;
 
-use rand::{Rng, SeedableRng};
+use rand::SeedableRng;
+use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -13,7 +15,7 @@ use sdl2::rect::Rect;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
-use crate::model::FieldBlock;
+use crate::model::{Block, BlockState, Field, FieldBlock};
 
 
 const BLOCK_WIDTH_PX: u32 = 25;
@@ -23,8 +25,11 @@ const FIELD_HEIGHT_BLOCKS: u32 = 18;
 const OFFSET_TOP_PX: i32 = 50;
 const OFFSET_LEFT_PX: i32 = 325;
 const BLOCK_COLOR_COUNT: usize = 6;
+const MINIMUM_SEQUENCE: usize = 3;
+const DISAPPEAR_BLINK_COUNT: usize = 8;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
+const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
 
 
 const BLOCK_COLORS: [Color; BLOCK_COLOR_COUNT] = [
@@ -47,7 +52,7 @@ const fn brighten_rgb(color: Color) -> Color {
 }
 
 
-fn draw(canvas: &mut Canvas<Window>, field: &[FieldBlock; FIELD_BLOCK_COUNT]) {
+fn draw(canvas: &mut Canvas<Window>, field: &Field) {
     canvas.set_draw_color((0, 0, 0));
     canvas.clear();
 
@@ -59,23 +64,219 @@ fn draw(canvas: &mut Canvas<Window>, field: &[FieldBlock; FIELD_BLOCK_COUNT]) {
         BLOCK_HEIGHT_PX * FIELD_HEIGHT_BLOCKS,
     )).unwrap();
 
-    let mut i = 0;
-    for y in 0..FIELD_HEIGHT_BLOCKS {
-        for x in 0..FIELD_WIDTH_BLOCKS {
-            if let FieldBlock::Block { color_index, .. } = field[i] {
-                canvas.set_draw_color(BLOCK_COLORS[usize::from(color_index)]);
-                canvas.fill_rect(Rect::new(
-                    OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap(),
-                    OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap(),
-                    BLOCK_WIDTH_PX,
-                    BLOCK_HEIGHT_PX,
-                )).unwrap();
-            }
-            i += 1;
+    let blocks_and_coords = field.blocks().iter().zip(Field::coords());
+    for (field_block, (x, y)) in blocks_and_coords {
+        if let FieldBlock::Block(block) = field_block {
+            let color_index = usize::from(block.color_index);
+            let color = if let Some(counter) = block.state.disappearing_counter() {
+                if counter % 2 == 0 {
+                    BLOCK_COLORS[color_index]
+                } else {
+                    BRIGHT_COLORS[color_index]
+                }
+            } else {
+                BLOCK_COLORS[color_index]
+            };
+            canvas.set_draw_color(color);
+            canvas.fill_rect(Rect::new(
+                OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap(),
+                OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap(),
+                BLOCK_WIDTH_PX,
+                BLOCK_HEIGHT_PX,
+            )).unwrap();
         }
     }
 
     canvas.present();
+}
+
+
+fn find_sequence(field: &Field, x: u32, y: u32, dx: i32, dy: i32) -> Vec<(u32, u32)> {
+    assert!(dx != 0 || dy != 0);
+    assert!(x < FIELD_WIDTH_BLOCKS && y < FIELD_HEIGHT_BLOCKS);
+
+    let mut ret = Vec::new();
+    let expected_color = match field.block_by_coord(x, y).as_block() {
+        Some(b) => b.color_index,
+        None => return ret, // no block here
+    };
+    ret.push((x, y));
+    loop {
+        let (last_x, last_y) = *ret.last().unwrap();
+        let next_x = i32::try_from(last_x).unwrap() + dx;
+        let next_y = i32::try_from(last_y).unwrap() + dy;
+
+        if next_x < 0 {
+            break;
+        }
+        if next_x >= FIELD_WIDTH_BLOCKS.try_into().unwrap() {
+            break;
+        }
+
+        if next_y < 0 {
+            break;
+        }
+        if next_y >= FIELD_HEIGHT_BLOCKS.try_into().unwrap() {
+            break;
+        }
+
+        let x2 = u32::try_from(next_x).unwrap();
+        let y2 = u32::try_from(next_y).unwrap();
+
+        if let Some(new_block) = field.block_by_coord(x2, y2).as_block() {
+            if new_block.color_index != expected_color {
+                break;
+            }
+        } else {
+            break;
+        }
+
+        ret.push((x2, y2));
+    }
+
+    ret
+}
+
+
+fn get_coordinates_of_sequences(field: &Field) -> Vec<Vec<(u32, u32)>> {
+    let settled_blocks = field.block_coords_with_predicate(|bs| bs.is_stationary());
+
+    let mut sequences = Vec::with_capacity(4);
+    for &(x, y) in &settled_blocks {
+        // to count patterns only once, only check the following directions:
+        sequences.push(find_sequence(field, x, y, 1, 0)); // right
+        sequences.push(find_sequence(field, x, y, 1, 1)); // down-right
+        sequences.push(find_sequence(field, x, y, 0, 1)); // down
+        sequences.push(find_sequence(field, x, y, -1, 1)); // down-left
+
+        // ensure our sequences are long enough
+        sequences.retain(|seq| seq.len() >= MINIMUM_SEQUENCE);
+    }
+
+    sequences
+}
+
+
+fn handle_gravity_blocks(field: &mut Field, gravity_block_coords: &[(u32, u32)]) {
+    for &(x, y) in gravity_block_coords {
+        if field.block_at_coord_hit_bottom_or_stationary_block(x, y) {
+            // we are no longer being pulled by gravity
+            // mark this block as stationary
+            field.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .state = BlockState::Stationary;
+        } else {
+            // drop this block by 1
+            let this_block = field.block_by_coord(x, y);
+            *field.block_by_coord_mut(x, y + 1) = this_block.clone();
+            *field.block_by_coord_mut(x, y) = FieldBlock::Background;
+        }
+    }
+}
+
+
+fn handle_sequences(field: &mut Field) -> bool {
+    // find sequences
+    let mut sequence_score = 0;
+    let sequences = get_coordinates_of_sequences(&field);
+    if sequences.len() == 0 {
+        return false;
+    }
+
+    for sequence in &sequences {
+        sequence_score += sequence.len() - (MINIMUM_SEQUENCE - 1);
+    }
+    println!("sequence score: {}", sequence_score);
+
+    // mark blocks from sequences as disappearing
+    let sequence_coords: BTreeSet<(u32, u32)> = sequences
+        .iter()
+        .flat_map(|seq| seq)
+        .map(|(x, y)| (*x, *y))
+        .collect();
+    for &(x, y) in &sequence_coords {
+        field.block_by_coord_mut(x, y)
+            .as_block_mut().unwrap()
+            .state = BlockState::Disappearing(DISAPPEAR_BLINK_COUNT);
+    }
+
+    true
+}
+
+
+fn handle_disappearing_blocks(field: &mut Field, disappearing_block_coords: &[(u32, u32)]) {
+    for &(x, y) in disappearing_block_coords {
+        let current_count = match field.block_by_coord(x, y).as_block() {
+            Some(b) => match b.state.disappearing_counter() {
+                Some(dc) => dc,
+                None => continue,
+            },
+            None => continue,
+        };
+        if current_count > 0 {
+            // reduce count by 1
+            field.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .state = BlockState::Disappearing(current_count - 1);
+        } else {
+            // disappear the block completely
+            *field.block_by_coord_mut(x, y) = FieldBlock::Background;
+
+            // mark all blocks above as pulled-by-gravity unless they are also disappearing
+            for above_y in 0..y {
+                if let Some(block) = field.block_by_coord_mut(x, above_y).as_block_mut() {
+                    if !block.state.is_disappearing() {
+                        block.state = BlockState::Gravity;
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+fn make_new_descending_block(field: &mut Field, color_distribution: &Uniform<u8>, rng: &mut StdRng) -> bool {
+    // is there even space?
+    let has_space_for_new_block =
+        field.block_by_coord(NEW_BLOCK_COLUMN, 0).is_background()
+        && field.block_by_coord(NEW_BLOCK_COLUMN, 1).is_background()
+        && field.block_by_coord(NEW_BLOCK_COLUMN, 2).is_background()
+    ;
+    if !has_space_for_new_block {
+        false
+    } else {
+        // pick out three colors at random
+        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 0) = FieldBlock::Block(Block {
+            color_index: color_distribution.sample(rng),
+            state: BlockState::Descending,
+        });
+        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 1) = FieldBlock::Block(Block {
+            color_index: color_distribution.sample(rng),
+            state: BlockState::Descending,
+        });
+        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 2) = FieldBlock::Block(Block {
+            color_index: color_distribution.sample(rng),
+            state: BlockState::Descending,
+        });
+        true
+    }
+}
+
+
+fn handle_descending_blocks(field: &mut Field, descending_block_coords: &[(u32, u32)]) {
+    for &(x, y) in descending_block_coords {
+        let this_block = field.block_by_coord(x, y);
+
+        if field.block_at_coord_hit_bottom_or_stationary_block(x, y) {
+            // we are no longer descending
+            field.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .state = BlockState::Stationary;
+        } else {
+            *field.block_by_coord_mut(x, y + 1) = this_block.clone();
+            *field.block_by_coord_mut(x, y) = FieldBlock::Background;
+        }
+    }
 }
 
 
@@ -93,19 +294,89 @@ fn main() {
     rng_seed[1] = 42;
     rng_seed[2] = 69;
     let mut rng = StdRng::from_seed(rng_seed);
+    let color_distribution = Uniform::new(0, u8::try_from(BLOCK_COLOR_COUNT).unwrap());
     let mut block_fall_counter = 0;
     let mut block_fall_limit = 64;
 
     let mut canvas = window.into_canvas().build().unwrap();
-    let mut field = [FieldBlock::Background; FIELD_BLOCK_COUNT];
-    field[12] = FieldBlock::Block { color_index: 1, falling: false };
+    let mut field = Field::new();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     'main_loop: loop {
+        // handle events
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'main_loop;
+                },
+                Event::KeyDown { keycode: Some(kc), .. } => {
+                    match kc {
+                        Keycode::Escape => break 'main_loop,
+                        Keycode::Left => {
+                            // try moving falling blocks left
+                            let descending_block_coords = field
+                                .block_coords_with_predicate(|bs| bs.is_descending());
+                            let can_move = descending_block_coords.iter()
+                                .all(|&(x, y)|
+                                    x > 0
+                                    && field.block_by_coord(x - 1, y).is_background()
+                                );
+                            if can_move {
+                                for (x, y) in descending_block_coords {
+                                    *field.block_by_coord_mut(x - 1, y) = field.block_by_coord(x, y).clone();
+                                    *field.block_by_coord_mut(x, y) = FieldBlock::Background;
+                                }
+                            }
+                        },
+                        Keycode::Right => {
+                            // try moving falling blocks right
+                            let descending_block_coords = field
+                                .block_coords_with_predicate(|bs| bs.is_descending());
+                            let can_move = descending_block_coords.iter()
+                                .all(|&(x, y)|
+                                    x < FIELD_WIDTH_BLOCKS - 1
+                                    && field.block_by_coord(x + 1, y).is_background()
+                                );
+                            if can_move {
+                                for (x, y) in descending_block_coords {
+                                    *field.block_by_coord_mut(x + 1, y) = field.block_by_coord(x, y).clone();
+                                    *field.block_by_coord_mut(x, y) = FieldBlock::Background;
+                                }
+                            }
+                        },
+                        Keycode::Up => {
+                            // cycle through colors
+                            let descending_block_coords = field
+                                .block_coords_with_predicate(|bs| bs.is_descending());
+                            let mut queue = VecDeque::with_capacity(descending_block_coords.len());
+                            for &(x, y) in &descending_block_coords {
+                                queue.push_back(
+                                    field.block_by_coord(x, y)
+                                        .as_block().unwrap()
+                                        .color_index
+                                );
+                            }
+                            if let Some(first_color) = queue.pop_front() {
+                                queue.push_back(first_color);
+                            }
+                            for (&(x, y), &new_color) in descending_block_coords.iter().zip(queue.iter()) {
+                                field.block_by_coord_mut(x, y)
+                                    .as_block_mut().unwrap()
+                                    .color_index = new_color;
+                            }
+                        },
+                        Keycode::Down => {
+                            // hand over descending blocks to gravity
+                            let descending_block_coords = field
+                                .block_coords_with_predicate(|bs| bs.is_descending());
+                            for &(x, y) in descending_block_coords.iter() {
+                                field.block_by_coord_mut(x, y)
+                                    .as_block_mut().unwrap()
+                                    .state = BlockState::Gravity;
+                            }
+                        },
+                        _ => {},
+                    }
                 },
                 _ => {},
             }
@@ -113,23 +384,50 @@ fn main() {
 
         draw(&mut canvas, &field);
 
-        // handle falling blocks
-        if block_fall_counter == block_fall_limit {
-            block_fall_counter = 0;
+        let disappearing_block_coords = field
+            .block_coords_with_predicate(|bs| bs.is_disappearing());
+        if disappearing_block_coords.len() > 0 {
+            // count down
+            handle_disappearing_blocks(&mut field, &disappearing_block_coords);
 
-            // any falling blocks?
-            let mut has_falling_blocks = false;
-            let falling_blocks = field
-                .iter_mut()
-                .rev()
-                .filter(|b| b.is_falling_block());
-            for falling_block in falling_blocks {
-                
+            // continue immediately
+            block_fall_counter = block_fall_limit;
+        } else {
+            let gravity_block_coords = field
+                .block_coords_with_predicate(|bs| bs.is_pulled_by_gravity());
+            if gravity_block_coords.len() > 0 {
+                handle_gravity_blocks(&mut field, &gravity_block_coords);
+
+                // continue immediately
+                block_fall_counter = block_fall_limit;
+            } else {
+                if block_fall_counter == block_fall_limit {
+                    // handle descending blocks
+                    block_fall_counter = 0;
+
+                    let descending_block_coords = field
+                        .block_coords_with_predicate(|bs| bs.is_descending());
+                    handle_descending_blocks(&mut field, &descending_block_coords);
+
+                    if descending_block_coords.len() == 0 {
+                        // no more descending blocks
+
+                        // any sequences?
+                        let sequences_found = handle_sequences(&mut field);
+                        if sequences_found {
+                            // continue immediately
+                            block_fall_counter = block_fall_limit - 1;
+                        } else {
+                            if !make_new_descending_block(&mut field, &color_distribution, &mut rng) {
+                                // GAME OVER
+                                break 'main_loop;
+                            }
+                        }
+                    }
+                }
+                block_fall_counter += 1;
             }
         }
-        block_fall_counter += 1;
-
-        // more game loop
 
         canvas.present();
         sleep(Duration::new(0, 1_000_000_000 / 60))
