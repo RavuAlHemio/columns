@@ -26,7 +26,7 @@ const OFFSET_TOP_PX: i32 = 50;
 const OFFSET_LEFT_PX: i32 = 325;
 const BLOCK_COLOR_COUNT: usize = 6;
 const MINIMUM_SEQUENCE: usize = 3;
-const DISAPPEAR_BLINK_COUNT: usize = 8;
+const DISAPPEAR_BLINK_COUNT: usize = 32;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
 const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
@@ -45,9 +45,9 @@ const BRIGHT_COLORS: [Color; BLOCK_COLOR_COUNT] = [
 
 const fn brighten_rgb(color: Color) -> Color {
     Color::RGB(
-        127 + color.r/255,
-        127 + color.g/255,
-        127 + color.b/255,
+        204 + color.r/5,
+        204 + color.g/5,
+        204 + color.b/5,
     )
 }
 
@@ -69,7 +69,7 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field) {
         if let FieldBlock::Block(block) = field_block {
             let color_index = usize::from(block.color_index);
             let color = if let Some(counter) = block.state.disappearing_counter() {
-                if counter % 2 == 0 {
+                if (counter & (1 << 3)) == 0 {
                     BLOCK_COLORS[color_index]
                 } else {
                     BRIGHT_COLORS[color_index]
