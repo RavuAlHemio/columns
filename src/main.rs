@@ -3,6 +3,7 @@ mod seg_display;
 
 
 use std::collections::{BTreeSet, VecDeque};
+use std::env;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -341,6 +342,17 @@ fn handle_descending_blocks(field: &mut Field, descending_block_coords: &[(u32, 
 
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    let mut rng = if args.len() > 1 {
+        let seed_integer: u128 = args[1].parse()
+            .expect("failed to parse RNG seed");
+        let mut rng_seed = [0u8; 32];
+        rng_seed[0..128/8].copy_from_slice(&seed_integer.to_be_bytes());
+        StdRng::from_seed(rng_seed)
+    } else {
+        StdRng::from_entropy()
+    };
+
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
@@ -349,11 +361,6 @@ fn main() {
         .build()
         .unwrap();
 
-    let mut rng_seed = [0u8; 32];
-    rng_seed[0] = 23;
-    rng_seed[1] = 42;
-    rng_seed[2] = 69;
-    let mut rng = StdRng::from_seed(rng_seed);
     let color_distribution = Uniform::new(0, u8::try_from(BLOCK_COLOR_COUNT).unwrap());
     let mut block_fall_counter = 0;
     let mut block_fall_limit = 64;
