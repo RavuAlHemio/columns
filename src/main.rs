@@ -18,6 +18,8 @@ use sdl2::video::Window;
 use crate::model::{Block, BlockState, Field, FieldBlock};
 
 
+const WINDOW_WIDTH: u32 = 800;
+const WINDOW_HEIGHT: u32 = 600;
 const BLOCK_WIDTH_PX: u32 = 25;
 const BLOCK_HEIGHT_PX: u32 = 25;
 const FIELD_WIDTH_BLOCKS: u32 = 6;
@@ -27,6 +29,8 @@ const OFFSET_LEFT_PX: i32 = 325;
 const BLOCK_COLOR_COUNT: usize = 6;
 const MINIMUM_SEQUENCE: usize = 3;
 const DISAPPEAR_BLINK_COUNT: usize = 32;
+const PAUSE_BAR_WIDTH: u32 = 85;
+const PAUSE_BAR_HEIGHT: u32 = 256;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
 const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
@@ -52,7 +56,7 @@ const fn brighten_rgb(color: Color) -> Color {
 }
 
 
-fn draw(canvas: &mut Canvas<Window>, field: &Field) {
+fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool) {
     canvas.set_draw_color((0, 0, 0));
     canvas.clear();
 
@@ -85,6 +89,18 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field) {
                 BLOCK_HEIGHT_PX,
             )).unwrap();
         }
+    }
+
+    if is_paused {
+        // draw two parallel vertical rectangles to indicate pause
+        let total_width = PAUSE_BAR_WIDTH * 3;
+        let x1: i32 = ((WINDOW_WIDTH - total_width) / 2).try_into().unwrap();
+        let x2 = x1 + 2*i32::try_from(PAUSE_BAR_WIDTH).unwrap();
+        let y: i32 = ((WINDOW_HEIGHT - PAUSE_BAR_HEIGHT) / 2).try_into().unwrap();
+
+        canvas.set_draw_color(Color::GRAY);
+        canvas.fill_rect(Rect::new(x1, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
+        canvas.fill_rect(Rect::new(x2, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
     }
 
     canvas.present();
@@ -284,7 +300,7 @@ fn main() {
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
 
-    let window = video_subsystem.window("Columns", 800, 600)
+    let window = video_subsystem.window("Columns", WINDOW_WIDTH, WINDOW_HEIGHT)
         .position_centered()
         .build()
         .unwrap();
@@ -387,7 +403,7 @@ fn main() {
             }
         }
 
-        draw(&mut canvas, &field);
+        draw(&mut canvas, &field, is_paused);
 
         if !is_paused {
             let disappearing_block_coords = field
