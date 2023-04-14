@@ -1,4 +1,5 @@
 mod model;
+mod seg_display;
 
 
 use std::collections::{BTreeSet, VecDeque};
@@ -16,6 +17,7 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 use crate::model::{Block, BlockState, Field, FieldBlock};
+use crate::seg_display::SegmentedDisplay;
 
 
 const WINDOW_WIDTH: u32 = 800;
@@ -24,13 +26,14 @@ const BLOCK_WIDTH_PX: u32 = 25;
 const BLOCK_HEIGHT_PX: u32 = 25;
 const FIELD_WIDTH_BLOCKS: u32 = 6;
 const FIELD_HEIGHT_BLOCKS: u32 = 18;
-const OFFSET_TOP_PX: i32 = 50;
-const OFFSET_LEFT_PX: i32 = 325;
+const FIELD_OFFSET_TOP_PX: i32 = 50;
+const FIELD_OFFSET_LEFT_PX: i32 = 325;
 const BLOCK_COLOR_COUNT: usize = 6;
 const MINIMUM_SEQUENCE: usize = 3;
 const DISAPPEAR_BLINK_COUNT: usize = 32;
 const PAUSE_BAR_WIDTH: u32 = 85;
 const PAUSE_BAR_HEIGHT: u32 = 256;
+const SCORE_OFFSET_LEFT_PX: i32 = 500;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
 const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
@@ -56,14 +59,14 @@ const fn brighten_rgb(color: Color) -> Color {
 }
 
 
-fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool) {
+fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool, score: u64) {
     canvas.set_draw_color((0, 0, 0));
     canvas.clear();
 
     canvas.set_draw_color((0xC0, 0xC0, 0xC0));
     canvas.draw_rect(Rect::new(
-        OFFSET_LEFT_PX,
-        OFFSET_TOP_PX,
+        FIELD_OFFSET_LEFT_PX,
+        FIELD_OFFSET_TOP_PX,
         BLOCK_WIDTH_PX * FIELD_WIDTH_BLOCKS,
         BLOCK_HEIGHT_PX * FIELD_HEIGHT_BLOCKS,
     )).unwrap();
@@ -83,12 +86,31 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool) {
             };
             canvas.set_draw_color(color);
             canvas.fill_rect(Rect::new(
-                OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap(),
-                OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap(),
+                FIELD_OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap(),
+                FIELD_OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap(),
                 BLOCK_WIDTH_PX,
                 BLOCK_HEIGHT_PX,
             )).unwrap();
         }
+    }
+
+    // draw score
+    let mut my_score = score;
+    let mut score_digits = [0u8; 4];
+    for i in (0..score_digits.len()).rev() {
+        score_digits[i] = u8::try_from(my_score % 10).unwrap();
+        my_score /= 10;
+    }
+    let segs = score_digits.iter()
+        .enumerate()
+        .map(|(i, &dig)| SegmentedDisplay::new(
+            SCORE_OFFSET_LEFT_PX + i32::try_from(i).unwrap() * crate::seg_display::DIGIT_OFFSET,
+            FIELD_OFFSET_TOP_PX,
+            Color::GREEN,
+            dig,
+        ));
+    for seg in segs {
+        seg.draw(canvas);
     }
 
     if is_paused {
@@ -191,18 +213,16 @@ fn handle_gravity_blocks(field: &mut Field, gravity_block_coords: &[(u32, u32)])
 }
 
 
-fn handle_sequences(field: &mut Field) -> bool {
+fn handle_sequences(field: &mut Field, score: &mut u64) -> bool {
     // find sequences
-    let mut sequence_score = 0;
     let sequences = get_coordinates_of_sequences(&field);
     if sequences.len() == 0 {
         return false;
     }
 
     for sequence in &sequences {
-        sequence_score += sequence.len() - (MINIMUM_SEQUENCE - 1);
+        *score += u64::try_from(sequence.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
     }
-    println!("sequence score: {}", sequence_score);
 
     // mark blocks from sequences as disappearing
     let sequence_coords: BTreeSet<(u32, u32)> = sequences
@@ -317,6 +337,7 @@ fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
     let mut field = Field::new();
     let mut is_paused = false;
+    let mut score = 0;
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     'main_loop: loop {
@@ -403,7 +424,7 @@ fn main() {
             }
         }
 
-        draw(&mut canvas, &field, is_paused);
+        draw(&mut canvas, &field, is_paused, score);
 
         if !is_paused {
             let disappearing_block_coords = field
@@ -435,7 +456,7 @@ fn main() {
                             // no more descending blocks
 
                             // any sequences?
-                            let sequences_found = handle_sequences(&mut field);
+                            let sequences_found = handle_sequences(&mut field, &mut score);
                             if sequences_found {
                                 // continue immediately
                                 block_fall_counter = block_fall_limit - 1;
