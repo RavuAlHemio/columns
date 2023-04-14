@@ -300,6 +300,7 @@ fn main() {
 
     let mut canvas = window.into_canvas().build().unwrap();
     let mut field = Field::new();
+    let mut is_paused = false;
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     'main_loop: loop {
@@ -312,7 +313,7 @@ fn main() {
                 Event::KeyDown { keycode: Some(kc), .. } => {
                     match kc {
                         Keycode::Escape => break 'main_loop,
-                        Keycode::Left => {
+                        Keycode::Left => if !is_paused {
                             // try moving falling blocks left
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -328,7 +329,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Right => {
+                        Keycode::Right => if !is_paused {
                             // try moving falling blocks right
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -344,7 +345,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Up => {
+                        Keycode::Up => if !is_paused {
                             // cycle through colors
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -365,7 +366,7 @@ fn main() {
                                     .color_index = new_color;
                             }
                         },
-                        Keycode::Down => {
+                        Keycode::Down => if !is_paused {
                             // hand over descending blocks to gravity
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -374,6 +375,10 @@ fn main() {
                                     .as_block_mut().unwrap()
                                     .state = BlockState::Gravity;
                             }
+                        },
+                        Keycode::F3 => {
+                            // pause/unpause
+                            is_paused = !is_paused;
                         },
                         _ => {},
                     }
@@ -384,48 +389,50 @@ fn main() {
 
         draw(&mut canvas, &field);
 
-        let disappearing_block_coords = field
-            .block_coords_with_predicate(|bs| bs.is_disappearing());
-        if disappearing_block_coords.len() > 0 {
-            // count down
-            handle_disappearing_blocks(&mut field, &disappearing_block_coords);
-
-            // continue immediately
-            block_fall_counter = block_fall_limit;
-        } else {
-            let gravity_block_coords = field
-                .block_coords_with_predicate(|bs| bs.is_pulled_by_gravity());
-            if gravity_block_coords.len() > 0 {
-                handle_gravity_blocks(&mut field, &gravity_block_coords);
+        if !is_paused {
+            let disappearing_block_coords = field
+                .block_coords_with_predicate(|bs| bs.is_disappearing());
+            if disappearing_block_coords.len() > 0 {
+                // count down
+                handle_disappearing_blocks(&mut field, &disappearing_block_coords);
 
                 // continue immediately
                 block_fall_counter = block_fall_limit;
             } else {
-                if block_fall_counter == block_fall_limit {
-                    // handle descending blocks
-                    block_fall_counter = 0;
+                let gravity_block_coords = field
+                    .block_coords_with_predicate(|bs| bs.is_pulled_by_gravity());
+                if gravity_block_coords.len() > 0 {
+                    handle_gravity_blocks(&mut field, &gravity_block_coords);
 
-                    let descending_block_coords = field
-                        .block_coords_with_predicate(|bs| bs.is_descending());
-                    handle_descending_blocks(&mut field, &descending_block_coords);
+                    // continue immediately
+                    block_fall_counter = block_fall_limit;
+                } else {
+                    if block_fall_counter == block_fall_limit {
+                        // handle descending blocks
+                        block_fall_counter = 0;
 
-                    if descending_block_coords.len() == 0 {
-                        // no more descending blocks
+                        let descending_block_coords = field
+                            .block_coords_with_predicate(|bs| bs.is_descending());
+                        handle_descending_blocks(&mut field, &descending_block_coords);
 
-                        // any sequences?
-                        let sequences_found = handle_sequences(&mut field);
-                        if sequences_found {
-                            // continue immediately
-                            block_fall_counter = block_fall_limit - 1;
-                        } else {
-                            if !make_new_descending_block(&mut field, &color_distribution, &mut rng) {
-                                // GAME OVER
-                                break 'main_loop;
+                        if descending_block_coords.len() == 0 {
+                            // no more descending blocks
+
+                            // any sequences?
+                            let sequences_found = handle_sequences(&mut field);
+                            if sequences_found {
+                                // continue immediately
+                                block_fall_counter = block_fall_limit - 1;
+                            } else {
+                                if !make_new_descending_block(&mut field, &color_distribution, &mut rng) {
+                                    // GAME OVER
+                                    break 'main_loop;
+                                }
                             }
                         }
                     }
+                    block_fall_counter += 1;
                 }
-                block_fall_counter += 1;
             }
         }
 
