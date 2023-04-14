@@ -476,6 +476,16 @@ fn main() {
                                     .state = BlockState::Gravity;
                             }
                         },
+                        Keycode::F2 => {
+                            // restart game
+                            for field_block in field.blocks_mut() {
+                                *field_block = FieldBlock::Background;
+                            }
+                            for color_stat in &mut color_stats {
+                                *color_stat = 0;
+                            }
+                            score = 0;
+                        },
                         Keycode::F3 => {
                             // pause/unpause
                             is_paused = !is_paused;
