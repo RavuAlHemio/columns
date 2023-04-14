@@ -129,47 +129,61 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool, score: u64)
 }
 
 
+fn sequence_continues(field: &Field, x: u32, y: u32, dx: i32, dy: i32) -> Option<(u32, u32)> {
+    let this_color = match field.block_by_coord(x, y).as_block() {
+        Some(block) => block.color_index,
+        None => return None,
+    };
+
+    let next_x = i32::try_from(x).unwrap() + dx;
+    let next_y = i32::try_from(y).unwrap() + dy;
+
+    if next_x < 0 {
+        return None;
+    }
+    if next_x >= FIELD_WIDTH_BLOCKS.try_into().unwrap() {
+        return None;
+    }
+
+    if next_y < 0 {
+        return None;
+    }
+    if next_y >= FIELD_HEIGHT_BLOCKS.try_into().unwrap() {
+        return None;
+    }
+
+    let x2 = u32::try_from(next_x).unwrap();
+    let y2 = u32::try_from(next_y).unwrap();
+
+    let neighbor_color = match field.block_by_coord(x2, y2).as_block() {
+        Some(block) => block.color_index,
+        None => return None,
+    };
+
+    if this_color == neighbor_color {
+        Some((x2, y2))
+    } else {
+        None
+    }
+}
+
+
 fn find_sequence(field: &Field, x: u32, y: u32, dx: i32, dy: i32) -> Vec<(u32, u32)> {
     assert!(dx != 0 || dy != 0);
     assert!(x < FIELD_WIDTH_BLOCKS && y < FIELD_HEIGHT_BLOCKS);
 
     let mut ret = Vec::new();
-    let expected_color = match field.block_by_coord(x, y).as_block() {
-        Some(b) => b.color_index,
-        None => return ret, // no block here
+    if field.block_by_coord(x, y).as_block().is_none() {
+        return ret; // no block here
     };
     ret.push((x, y));
     loop {
         let (last_x, last_y) = *ret.last().unwrap();
-        let next_x = i32::try_from(last_x).unwrap() + dx;
-        let next_y = i32::try_from(last_y).unwrap() + dy;
-
-        if next_x < 0 {
-            break;
-        }
-        if next_x >= FIELD_WIDTH_BLOCKS.try_into().unwrap() {
-            break;
-        }
-
-        if next_y < 0 {
-            break;
-        }
-        if next_y >= FIELD_HEIGHT_BLOCKS.try_into().unwrap() {
-            break;
-        }
-
-        let x2 = u32::try_from(next_x).unwrap();
-        let y2 = u32::try_from(next_y).unwrap();
-
-        if let Some(new_block) = field.block_by_coord(x2, y2).as_block() {
-            if new_block.color_index != expected_color {
-                break;
-            }
+        if let Some((x2, y2)) = sequence_continues(field, last_x, last_y, dx, dy) {
+            ret.push((x2, y2));
         } else {
             break;
         }
-
-        ret.push((x2, y2));
     }
 
     ret
@@ -181,11 +195,21 @@ fn get_coordinates_of_sequences(field: &Field) -> Vec<Vec<(u32, u32)>> {
 
     let mut sequences = Vec::with_capacity(4);
     for &(x, y) in &settled_blocks {
-        // to count patterns only once, only check the following directions:
-        sequences.push(find_sequence(field, x, y, 1, 0)); // right
-        sequences.push(find_sequence(field, x, y, 1, 1)); // down-right
-        sequences.push(find_sequence(field, x, y, 0, 1)); // down
-        sequences.push(find_sequence(field, x, y, -1, 1)); // down-left
+        // when looking for new sequences, we only look in four directions;
+        // to ensure we don't count a sequence multiple times, we ensure there isn't a sequence in
+        // the other direction as well
+        if sequence_continues(field, x, y, -1, 0).is_none() { // left
+            sequences.push(find_sequence(field, x, y, 1, 0)); // right
+        }
+        if sequence_continues(field, x, y, -1, -1).is_none() { // up-left
+            sequences.push(find_sequence(field, x, y, 1, 1)); // down-right
+        }
+        if sequence_continues(field, x, y, 0, -1).is_none() { // up
+            sequences.push(find_sequence(field, x, y, 0, 1)); // down
+        }
+        if sequence_continues(field, x, y, 1, -1).is_none() { // up-right
+            sequences.push(find_sequence(field, x, y, -1, 1)); // down-left
+        }
 
         // ensure our sequences are long enough
         sequences.retain(|seq| seq.len() >= MINIMUM_SEQUENCE);
