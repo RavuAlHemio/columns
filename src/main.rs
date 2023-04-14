@@ -35,6 +35,9 @@ const DISAPPEAR_BLINK_COUNT: usize = 32;
 const PAUSE_BAR_WIDTH: u32 = 85;
 const PAUSE_BAR_HEIGHT: u32 = 256;
 const SCORE_OFFSET_LEFT_PX: i32 = 500;
+const COLOR_STATS_BARS_LEFT_PX: i32 = 500;
+const COLOR_STATS_BAR_WIDTH: u32 = 8;
+const COLOR_STATS_BAR_SPACING: u32 = 2;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
 const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
@@ -60,7 +63,13 @@ const fn brighten_rgb(color: Color) -> Color {
 }
 
 
-fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool, score: u64) {
+fn draw(
+    canvas: &mut Canvas<Window>,
+    field: &Field,
+    is_paused: bool,
+    score: u64,
+    color_stats: &[u32; BLOCK_COLOR_COUNT],
+) {
     canvas.set_draw_color((0, 0, 0));
     canvas.clear();
 
@@ -112,6 +121,15 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool, score: u64)
         ));
     for seg in segs {
         seg.draw(canvas);
+    }
+
+    // draw color stats
+    for (i, &color_count) in color_stats.iter().enumerate() {
+        let x = COLOR_STATS_BARS_LEFT_PX + i32::try_from(i).unwrap() * i32::try_from(COLOR_STATS_BAR_WIDTH + COLOR_STATS_BAR_SPACING).unwrap();
+        let y = FIELD_OFFSET_TOP_PX + i32::try_from(FIELD_HEIGHT_BLOCKS * BLOCK_HEIGHT_PX - color_count).unwrap();
+
+        canvas.set_draw_color(BLOCK_COLORS[i]);
+        canvas.fill_rect(Rect::new(x, y, COLOR_STATS_BAR_WIDTH, color_count)).unwrap();
     }
 
     if is_paused {
@@ -296,7 +314,12 @@ fn handle_disappearing_blocks(field: &mut Field, disappearing_block_coords: &[(u
 }
 
 
-fn make_new_descending_block(field: &mut Field, color_distribution: &Uniform<u8>, rng: &mut StdRng) -> bool {
+fn make_new_descending_block(
+    field: &mut Field,
+    color_distribution: &Uniform<u8>,
+    rng: &mut StdRng,
+    color_stats: &mut [u32; BLOCK_COLOR_COUNT],
+) -> bool {
     // is there even space?
     let has_space_for_new_block =
         field.block_by_coord(NEW_BLOCK_COLUMN, 0).is_background()
@@ -307,16 +330,24 @@ fn make_new_descending_block(field: &mut Field, color_distribution: &Uniform<u8>
         false
     } else {
         // pick out three colors at random
+        let color0 = color_distribution.sample(rng);
+        let color1 = color_distribution.sample(rng);
+        let color2 = color_distribution.sample(rng);
+
+        color_stats[usize::from(color0)] += 1;
+        color_stats[usize::from(color1)] += 1;
+        color_stats[usize::from(color2)] += 1;
+
         *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 0) = FieldBlock::Block(Block {
-            color_index: color_distribution.sample(rng),
+            color_index: color0,
             state: BlockState::Descending,
         });
         *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 1) = FieldBlock::Block(Block {
-            color_index: color_distribution.sample(rng),
+            color_index: color1,
             state: BlockState::Descending,
         });
         *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 2) = FieldBlock::Block(Block {
-            color_index: color_distribution.sample(rng),
+            color_index: color2,
             state: BlockState::Descending,
         });
         true
@@ -362,6 +393,7 @@ fn main() {
         .unwrap();
 
     let color_distribution = Uniform::new(0, u8::try_from(BLOCK_COLOR_COUNT).unwrap());
+    let mut color_stats = [0u32; BLOCK_COLOR_COUNT];
     let mut block_fall_counter = 0;
     let mut block_fall_limit = 64;
 
@@ -455,7 +487,7 @@ fn main() {
             }
         }
 
-        draw(&mut canvas, &field, is_paused, score);
+        draw(&mut canvas, &field, is_paused, score, &color_stats);
 
         if !is_paused {
             let disappearing_block_coords = field
@@ -492,7 +524,7 @@ fn main() {
                                 // continue immediately
                                 block_fall_counter = block_fall_limit - 1;
                             } else {
-                                if !make_new_descending_block(&mut field, &color_distribution, &mut rng) {
+                                if !make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
                                     // GAME OVER
                                     break 'main_loop;
                                 }
