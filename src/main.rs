@@ -38,6 +38,8 @@ const SCORE_OFFSET_LEFT_PX: i32 = 500;
 const COLOR_STATS_BARS_LEFT_PX: i32 = 500;
 const COLOR_STATS_BAR_WIDTH: u32 = 8;
 const COLOR_STATS_BAR_SPACING: u32 = 2;
+const DEFAULT_BLOCK_FALL_LIMIT: u64 = 32;
+const SCORE_SPEEDUP_DIVISOR: u64 = 4;
 
 const FIELD_BLOCK_COUNT: usize = (FIELD_WIDTH_BLOCKS * FIELD_HEIGHT_BLOCKS) as usize;
 const NEW_BLOCK_COLUMN: u32 = FIELD_WIDTH_BLOCKS / 2;
@@ -395,7 +397,7 @@ fn main() {
     let color_distribution = Uniform::new(0, u8::try_from(BLOCK_COLOR_COUNT).unwrap());
     let mut color_stats = [0u32; BLOCK_COLOR_COUNT];
     let mut block_fall_counter = 0;
-    let mut block_fall_limit = 64;
+    let mut block_fall_limit = DEFAULT_BLOCK_FALL_LIMIT;
 
     let mut canvas = window.into_canvas().build().unwrap();
     let mut field = Field::new();
@@ -485,6 +487,7 @@ fn main() {
                                 *color_stat = 0;
                             }
                             score = 0;
+                            block_fall_limit = DEFAULT_BLOCK_FALL_LIMIT;
                         },
                         Keycode::F3 => {
                             // pause/unpause
@@ -529,8 +532,17 @@ fn main() {
                             // no more descending blocks
 
                             // any sequences?
+                            let old_score_divided = score / SCORE_SPEEDUP_DIVISOR;
                             let sequences_found = handle_sequences(&mut field, &mut score);
                             if sequences_found {
+                                if block_fall_limit > 1 {
+                                    let new_score_divided = score / SCORE_SPEEDUP_DIVISOR;
+                                    if new_score_divided > old_score_divided {
+                                        // increase speed by lowering the limit
+                                        block_fall_limit -= 1;
+                                    }
+                                }
+
                                 // continue immediately
                                 block_fall_counter = block_fall_limit - 1;
                             } else {
