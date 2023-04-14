@@ -106,7 +106,7 @@ fn draw(canvas: &mut Canvas<Window>, field: &Field, is_paused: bool, score: u64)
         .map(|(i, &dig)| SegmentedDisplay::new(
             SCORE_OFFSET_LEFT_PX + i32::try_from(i).unwrap() * crate::seg_display::DIGIT_OFFSET,
             FIELD_OFFSET_TOP_PX,
-            Color::GREEN,
+            Color::RGB(0x00, 0x7F, 0x00),
             dig,
         ));
     for seg in segs {
