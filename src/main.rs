@@ -133,6 +133,10 @@ fn draw(
 
     // draw color stats
     for (i, &color_count) in color_stats.iter().enumerate() {
+        if color_count == 0 {
+            continue;
+        }
+
         let x = COLOR_STATS_BARS_LEFT_PX + i32::try_from(i).unwrap() * i32::try_from(COLOR_STATS_BAR_WIDTH + COLOR_STATS_BAR_SPACING).unwrap();
         let y = FIELD_OFFSET_TOP_PX + i32::try_from(FIELD_HEIGHT_BLOCKS * BLOCK_HEIGHT_PX - color_count).unwrap();
 
