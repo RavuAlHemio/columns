@@ -29,6 +29,7 @@ const FIELD_WIDTH_BLOCKS: u32 = 6;
 const FIELD_HEIGHT_BLOCKS: u32 = 18;
 const FIELD_OFFSET_TOP_PX: i32 = 50;
 const FIELD_OFFSET_LEFT_PX: i32 = 325;
+const FIELD_FRAME_OFFSET_PX: i32 = 2;
 const BLOCK_COLOR_COUNT: usize = 6;
 const BLOCK_CENTER_OFFSET: u32 = 5;
 const MINIMUM_SEQUENCE: usize = 3;
@@ -92,10 +93,10 @@ fn draw(
 
     canvas.set_draw_color((0xC0, 0xC0, 0xC0));
     canvas.draw_rect(Rect::new(
-        FIELD_OFFSET_LEFT_PX,
-        FIELD_OFFSET_TOP_PX,
-        BLOCK_WIDTH_PX * FIELD_WIDTH_BLOCKS,
-        BLOCK_HEIGHT_PX * FIELD_HEIGHT_BLOCKS,
+        FIELD_OFFSET_LEFT_PX - FIELD_FRAME_OFFSET_PX,
+        FIELD_OFFSET_TOP_PX - FIELD_FRAME_OFFSET_PX,
+        BLOCK_WIDTH_PX * FIELD_WIDTH_BLOCKS + u32::try_from(2*FIELD_FRAME_OFFSET_PX).unwrap(),
+        BLOCK_HEIGHT_PX * FIELD_HEIGHT_BLOCKS + u32::try_from(2*FIELD_FRAME_OFFSET_PX).unwrap(),
     )).unwrap();
 
     let blocks_and_coords = field.blocks().iter().zip(Field::coords());
