@@ -14,7 +14,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
-use sdl2::render::Canvas;
+use sdl2::render::{BlendMode, Canvas};
 use sdl2::video::Window;
 
 use crate::model::{Block, BlockState, Field, FieldBlock};
@@ -400,6 +400,7 @@ fn main() {
     let mut block_fall_limit = DEFAULT_BLOCK_FALL_LIMIT;
 
     let mut canvas = window.into_canvas().build().unwrap();
+    canvas.set_blend_mode(BlendMode::Blend);
     let mut field = Field::new();
     let mut is_paused = false;
     let mut score = 0;
