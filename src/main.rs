@@ -623,6 +623,9 @@ fn main() {
                                 GameState::Play => GameState::Pause,
                                 GameState::Pause => GameState::Play,
                             };
+
+                            // force redraw to make sure the "pause" symbol appears
+                            force_draw = true;
                         },
                         _ => {},
                     }
@@ -632,10 +635,6 @@ fn main() {
                 },
                 _ => {},
             }
-        }
-
-        if game_state == GameState::Play || force_draw {
-            draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
         }
 
         if game_state == GameState::Play {
@@ -685,6 +684,9 @@ fn main() {
                                 if !make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
                                     // GAME OVER
                                     game_state = GameState::Over;
+
+                                    // force redraw to make sure the "stop" symbol appears
+                                    force_draw = true;
                                 }
                             }
                         }
@@ -695,6 +697,7 @@ fn main() {
         }
 
         if game_state == GameState::Play || force_draw {
+            draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
             canvas.present();
         }
 
