@@ -4,6 +4,7 @@ mod seg_display;
 
 use std::collections::{BTreeSet, VecDeque};
 use std::env;
+use std::iter::once;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -107,7 +108,7 @@ fn draw(
                 if (counter & (1 << 3)) == 0 {
                     base_color_index
                 } else {
-                    base_color_index + BLOCK_COLOR_COUNT
+                    BLOCK_COLOR_COUNT
                 }
             } else {
                 base_color_index
@@ -193,78 +194,70 @@ fn draw(
 
 
 fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>> {
-    let mut ret = Vec::with_capacity(2*BLOCK_COLOR_COUNT);
-    for brightened in [false, true] {
-        for base_color in BLOCK_COLORS {
-            let color = if brightened {
-                brighten_rgb(base_color, 8)
-            } else {
-                base_color
-            };
+    let mut ret = Vec::with_capacity(BLOCK_COLOR_COUNT+1);
+    for color in BLOCK_COLORS.into_iter().chain(once(Color::WHITE)) {
+        let mid_color = mul_div_rgb(color, 4, 6);
+        let dark_color = mul_div_rgb(color, 3, 6);
+        let pixel_count: usize = (BLOCK_WIDTH_PX * BLOCK_HEIGHT_PX)
+            .try_into().unwrap();
+        let width_usize: usize = BLOCK_WIDTH_PX.try_into().unwrap();
 
-            let mid_color = mul_div_rgb(color, 4, 6);
-            let dark_color = mul_div_rgb(color, 3, 6);
-            let pixel_count: usize = (BLOCK_WIDTH_PX * BLOCK_HEIGHT_PX)
-                .try_into().unwrap();
-            let width_usize: usize = BLOCK_WIDTH_PX.try_into().unwrap();
+        // start texture with dark color
+        // dddddddd
+        // dddddddd
+        // dddddddd
+        // dddddddd
+        let mut texture_colors = vec![dark_color; pixel_count];
 
-            // start texture with dark color
-            // dddddddd
-            // dddddddd
-            // dddddddd
-            // dddddddd
-            let mut texture_colors = vec![dark_color; pixel_count];
+        // change top triangle to light color
+        // llllllll
+        // lllllddd
+        // lllddddd
+        // lddddddd
+        for y_u32 in 0..BLOCK_HEIGHT_PX {
+            let y: usize = y_u32.try_into().unwrap();
 
-            // change top triangle to light color
-            // llllllll
-            // lllllddd
-            // lllddddd
-            // lddddddd
-            for y_u32 in 0..BLOCK_HEIGHT_PX {
-                let y: usize = y_u32.try_into().unwrap();
-
-                let end_px = BLOCK_WIDTH_PX - (y_u32 * BLOCK_WIDTH_PX / BLOCK_HEIGHT_PX);
-                for x_u32 in 0..end_px {
-                    let x: usize = x_u32.try_into().unwrap();
-                    texture_colors[y*width_usize + x] = color;
-                }
+            let end_px = BLOCK_WIDTH_PX - (y_u32 * BLOCK_WIDTH_PX / BLOCK_HEIGHT_PX);
+            for x_u32 in 0..end_px {
+                let x: usize = x_u32.try_into().unwrap();
+                texture_colors[y*width_usize + x] = color;
             }
-
-            // place mid-color square around middle
-            // llllllll
-            // llmmmmdd
-            // llmmmmdd
-            // lddddddd
-            for y_u32 in BLOCK_CENTER_OFFSET..(BLOCK_HEIGHT_PX-BLOCK_CENTER_OFFSET) {
-                let y: usize = y_u32.try_into().unwrap();
-
-                for x_u32 in BLOCK_CENTER_OFFSET..(BLOCK_WIDTH_PX-BLOCK_CENTER_OFFSET) {
-                    let x: usize = x_u32.try_into().unwrap();
-                    texture_colors[y*width_usize + x] = mid_color;
-                }
-            }
-
-            // squeeze into texture
-            let mut texture_data = Vec::with_capacity(texture_colors.len() * 4);
-            for color in texture_colors {
-                texture_data.push(color.r);
-                texture_data.push(color.g);
-                texture_data.push(color.b);
-                texture_data.push(color.a);
-            }
-
-            let mut texture = creator.create_texture(
-                Some(PixelFormatEnum::ABGR8888),
-                TextureAccess::Static,
-                BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX,
-            ).unwrap();
-            texture.update(
-                Rect::new(0, 0, BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX),
-                &texture_data,
-                (BLOCK_WIDTH_PX * 4).try_into().unwrap(),
-            ).unwrap();
-            ret.push(texture);
         }
+
+        // place mid-color square around middle
+        // llllllll
+        // llmmmmdd
+        // llmmmmdd
+        // lddddddd
+        for y_u32 in BLOCK_CENTER_OFFSET..(BLOCK_HEIGHT_PX-BLOCK_CENTER_OFFSET) {
+            let y: usize = y_u32.try_into().unwrap();
+
+            for x_u32 in BLOCK_CENTER_OFFSET..(BLOCK_WIDTH_PX-BLOCK_CENTER_OFFSET) {
+                let x: usize = x_u32.try_into().unwrap();
+                texture_colors[y*width_usize + x] = mid_color;
+            }
+        }
+
+        // squeeze into texture
+        let mut texture_data = Vec::with_capacity(texture_colors.len() * 4);
+        for color in texture_colors {
+            texture_data.push(color.r);
+            texture_data.push(color.g);
+            texture_data.push(color.b);
+            texture_data.push(color.a);
+        }
+
+        let mut texture = creator.create_texture(
+            Some(PixelFormatEnum::ABGR8888),
+            TextureAccess::Static,
+            BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX,
+        ).unwrap();
+        texture.update(
+            Rect::new(0, 0, BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX),
+            &texture_data,
+            (BLOCK_WIDTH_PX * 4).try_into().unwrap(),
+        ).unwrap();
+        ret.push(texture);
     }
     ret
 }
