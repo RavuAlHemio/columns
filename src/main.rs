@@ -10,7 +10,7 @@ use std::time::Duration;
 use rand::SeedableRng;
 use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
@@ -202,8 +202,8 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
                 base_color
             };
 
-            let mid_color = mul_div_rgb(color, 3, 5);
-            let dark_color = mul_div_rgb(color, 1, 5);
+            let mid_color = mul_div_rgb(color, 4, 6);
+            let dark_color = mul_div_rgb(color, 3, 6);
             let pixel_count: usize = (BLOCK_WIDTH_PX * BLOCK_HEIGHT_PX)
                 .try_into().unwrap();
             let width_usize: usize = BLOCK_WIDTH_PX.try_into().unwrap();
@@ -530,6 +530,8 @@ fn main() {
 
     let mut event_pump = sdl_context.event_pump().unwrap();
     'main_loop: loop {
+        let mut force_draw = false;
+
         // handle events
         for event in event_pump.poll_iter() {
             match event {
@@ -625,11 +627,16 @@ fn main() {
                         _ => {},
                     }
                 },
+                Event::Window { win_event: WindowEvent::Exposed, .. } => {
+                    force_draw = true;
+                },
                 _ => {},
             }
         }
 
-        draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
+        if game_state == GameState::Play || force_draw {
+            draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
+        }
 
         if game_state == GameState::Play {
             let disappearing_block_coords = field
@@ -687,7 +694,10 @@ fn main() {
             }
         }
 
-        canvas.present();
+        if game_state == GameState::Play || force_draw {
+            canvas.present();
+        }
+
         sleep(Duration::new(0, 1_000_000_000 / 60))
     }
 }
