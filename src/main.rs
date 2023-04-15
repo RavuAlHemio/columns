@@ -12,9 +12,9 @@ use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::Color;
+use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
-use sdl2::render::{BlendMode, Canvas};
+use sdl2::render::{BlendMode, Canvas, Texture, TextureAccess, TextureCreator};
 use sdl2::video::Window;
 
 use crate::model::{Block, BlockState, Field, FieldBlock};
@@ -30,6 +30,7 @@ const FIELD_HEIGHT_BLOCKS: u32 = 18;
 const FIELD_OFFSET_TOP_PX: i32 = 50;
 const FIELD_OFFSET_LEFT_PX: i32 = 325;
 const BLOCK_COLOR_COUNT: usize = 6;
+const BLOCK_CENTER_OFFSET: u32 = 5;
 const MINIMUM_SEQUENCE: usize = 3;
 const DISAPPEAR_BLINK_COUNT: usize = 32;
 const PAUSE_BAR_WIDTH: u32 = 85;
@@ -49,10 +50,6 @@ const BLOCK_COLORS: [Color; BLOCK_COLOR_COUNT] = [
     Color::RED, Color::GREEN, Color::BLUE,
     Color::YELLOW, Color::CYAN, Color::MAGENTA,
 ];
-const BRIGHT_COLORS: [Color; BLOCK_COLOR_COUNT] = [
-    brighten_rgb(Color::RED), brighten_rgb(Color::GREEN), brighten_rgb(Color::BLUE),
-    brighten_rgb(Color::YELLOW), brighten_rgb(Color::CYAN), brighten_rgb(Color::MAGENTA),
-];
 
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -62,11 +59,22 @@ enum GameState {
     Over,
 }
 
-const fn brighten_rgb(color: Color) -> Color {
+const fn mul_div(val: u8, numerator: u8, denominator: u8) -> u8 {
+    ((val as u16) * (numerator as u16) / (denominator as u16)) as u8
+}
+const fn mul_div_rgb(color: Color, numerator: u8, denominator: u8) -> Color {
     Color::RGB(
-        204 + color.r/5,
-        204 + color.g/5,
-        204 + color.b/5,
+        mul_div(color.r, numerator, denominator),
+        mul_div(color.g, numerator, denominator),
+        mul_div(color.b, numerator, denominator),
+    )
+}
+const fn brighten_rgb(color: Color, divisor: u8) -> Color {
+    let base = mul_div(255, divisor-1, divisor);
+    Color::RGB(
+        base + mul_div(color.r, 1, divisor),
+        base + mul_div(color.g, 1, divisor),
+        base + mul_div(color.b, 1, divisor),
     )
 }
 
@@ -77,6 +85,7 @@ fn draw(
     game_state: GameState,
     score: u64,
     color_stats: &[u32; BLOCK_COLOR_COUNT],
+    block_textures: &[Texture],
 ) {
     canvas.set_draw_color((0, 0, 0));
     canvas.clear();
@@ -92,23 +101,29 @@ fn draw(
     let blocks_and_coords = field.blocks().iter().zip(Field::coords());
     for (field_block, (x, y)) in blocks_and_coords {
         if let FieldBlock::Block(block) = field_block {
-            let color_index = usize::from(block.color_index);
-            let color = if let Some(counter) = block.state.disappearing_counter() {
+            let base_color_index = usize::from(block.color_index);
+            let color_index = if let Some(counter) = block.state.disappearing_counter() {
                 if (counter & (1 << 3)) == 0 {
-                    BLOCK_COLORS[color_index]
+                    base_color_index
                 } else {
-                    BRIGHT_COLORS[color_index]
+                    base_color_index + BLOCK_COLOR_COUNT
                 }
             } else {
-                BLOCK_COLORS[color_index]
+                base_color_index
             };
-            canvas.set_draw_color(color);
-            canvas.fill_rect(Rect::new(
-                FIELD_OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap(),
-                FIELD_OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap(),
-                BLOCK_WIDTH_PX,
-                BLOCK_HEIGHT_PX,
-            )).unwrap();
+
+            let actual_x = FIELD_OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap();
+            let actual_y = FIELD_OFFSET_TOP_PX + i32::try_from(y * BLOCK_HEIGHT_PX).unwrap();
+            canvas.copy(
+                &block_textures[color_index],
+                None,
+                Rect::new(
+                    actual_x,
+                    actual_y,
+                    BLOCK_WIDTH_PX,
+                    BLOCK_HEIGHT_PX,
+                ),
+            ).unwrap();
         }
     }
 
@@ -173,6 +188,84 @@ fn draw(
     }
 
     canvas.present();
+}
+
+
+fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>> {
+    let mut ret = Vec::with_capacity(2*BLOCK_COLOR_COUNT);
+    for brightened in [false, true] {
+        for base_color in BLOCK_COLORS {
+            let color = if brightened {
+                brighten_rgb(base_color, 8)
+            } else {
+                base_color
+            };
+
+            let mid_color = mul_div_rgb(color, 3, 5);
+            let dark_color = mul_div_rgb(color, 1, 5);
+            let pixel_count: usize = (BLOCK_WIDTH_PX * BLOCK_HEIGHT_PX)
+                .try_into().unwrap();
+            let width_usize: usize = BLOCK_WIDTH_PX.try_into().unwrap();
+
+            // start texture with dark color
+            // dddddddd
+            // dddddddd
+            // dddddddd
+            // dddddddd
+            let mut texture_colors = vec![dark_color; pixel_count];
+
+            // change top triangle to light color
+            // llllllll
+            // lllllddd
+            // lllddddd
+            // lddddddd
+            for y_u32 in 0..BLOCK_HEIGHT_PX {
+                let y: usize = y_u32.try_into().unwrap();
+
+                let end_px = BLOCK_WIDTH_PX - (y_u32 * BLOCK_WIDTH_PX / BLOCK_HEIGHT_PX);
+                for x_u32 in 0..end_px {
+                    let x: usize = x_u32.try_into().unwrap();
+                    texture_colors[y*width_usize + x] = color;
+                }
+            }
+
+            // place mid-color square around middle
+            // llllllll
+            // llmmmmdd
+            // llmmmmdd
+            // lddddddd
+            for y_u32 in BLOCK_CENTER_OFFSET..(BLOCK_HEIGHT_PX-BLOCK_CENTER_OFFSET) {
+                let y: usize = y_u32.try_into().unwrap();
+
+                for x_u32 in BLOCK_CENTER_OFFSET..(BLOCK_WIDTH_PX-BLOCK_CENTER_OFFSET) {
+                    let x: usize = x_u32.try_into().unwrap();
+                    texture_colors[y*width_usize + x] = mid_color;
+                }
+            }
+
+            // squeeze into texture
+            let mut texture_data = Vec::with_capacity(texture_colors.len() * 4);
+            for color in texture_colors {
+                texture_data.push(color.r);
+                texture_data.push(color.g);
+                texture_data.push(color.b);
+                texture_data.push(color.a);
+            }
+
+            let mut texture = creator.create_texture(
+                Some(PixelFormatEnum::ABGR8888),
+                TextureAccess::Static,
+                BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX,
+            ).unwrap();
+            texture.update(
+                Rect::new(0, 0, BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX),
+                &texture_data,
+                (BLOCK_WIDTH_PX * 4).try_into().unwrap(),
+            ).unwrap();
+            ret.push(texture);
+        }
+    }
+    ret
 }
 
 
@@ -427,6 +520,9 @@ fn main() {
 
     let mut canvas = window.into_canvas().build().unwrap();
     canvas.set_blend_mode(BlendMode::Blend);
+    let texture_maker = canvas.texture_creator();
+    let block_textures = make_block_textures(&texture_maker);
+
     let mut field = Field::new();
     let mut game_state = GameState::Play;
     let mut score = 0;
@@ -532,7 +628,7 @@ fn main() {
             }
         }
 
-        draw(&mut canvas, &field, game_state, score, &color_stats);
+        draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
 
         if game_state == GameState::Play {
             let disappearing_block_coords = field
