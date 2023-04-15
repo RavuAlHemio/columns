@@ -55,6 +55,12 @@ const BRIGHT_COLORS: [Color; BLOCK_COLOR_COUNT] = [
 ];
 
 
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+enum GameState {
+    #[default] Play,
+    Pause,
+    Over,
+}
 
 const fn brighten_rgb(color: Color) -> Color {
     Color::RGB(
@@ -68,7 +74,7 @@ const fn brighten_rgb(color: Color) -> Color {
 fn draw(
     canvas: &mut Canvas<Window>,
     field: &Field,
-    is_paused: bool,
+    game_state: GameState,
     score: u64,
     color_stats: &[u32; BLOCK_COLOR_COUNT],
 ) {
@@ -134,16 +140,32 @@ fn draw(
         canvas.fill_rect(Rect::new(x, y, COLOR_STATS_BAR_WIDTH, color_count)).unwrap();
     }
 
-    if is_paused {
-        // draw two parallel vertical rectangles to indicate pause
-        let total_width = PAUSE_BAR_WIDTH * 3;
-        let x1: i32 = ((WINDOW_WIDTH - total_width) / 2).try_into().unwrap();
-        let x2 = x1 + 2*i32::try_from(PAUSE_BAR_WIDTH).unwrap();
-        let y: i32 = ((WINDOW_HEIGHT - PAUSE_BAR_HEIGHT) / 2).try_into().unwrap();
+    match game_state {
+        GameState::Play => {},
+        GameState::Pause => {
+            // draw two parallel vertical rectangles to indicate pause
+            let total_width = PAUSE_BAR_WIDTH * 3;
+            let x1: i32 = ((WINDOW_WIDTH - total_width) / 2).try_into().unwrap();
+            let x2 = x1 + 2*i32::try_from(PAUSE_BAR_WIDTH).unwrap();
+            let y: i32 = ((WINDOW_HEIGHT - PAUSE_BAR_HEIGHT) / 2).try_into().unwrap();
 
-        canvas.set_draw_color(Color::GRAY);
-        canvas.fill_rect(Rect::new(x1, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
-        canvas.fill_rect(Rect::new(x2, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
+            let mut translucent_gray = Color::GRAY;
+            translucent_gray.a = 0xCC;
+            canvas.set_draw_color(translucent_gray);
+            canvas.fill_rect(Rect::new(x1, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
+            canvas.fill_rect(Rect::new(x2, y, PAUSE_BAR_WIDTH, PAUSE_BAR_HEIGHT)).unwrap();
+        },
+        GameState::Over => {
+            // draw a square to indicate game over
+            let total_width = PAUSE_BAR_WIDTH * 3;
+            let x: i32 = ((WINDOW_WIDTH - total_width) / 2).try_into().unwrap();
+            let y: i32 = ((WINDOW_HEIGHT - PAUSE_BAR_HEIGHT) / 2).try_into().unwrap();
+
+            let mut translucent_gray = Color::GRAY;
+            translucent_gray.a = 0xCC;
+            canvas.set_draw_color(translucent_gray);
+            canvas.fill_rect(Rect::new(x, y, total_width, PAUSE_BAR_HEIGHT)).unwrap();
+        },
     }
 
     canvas.present();
@@ -402,7 +424,7 @@ fn main() {
     let mut canvas = window.into_canvas().build().unwrap();
     canvas.set_blend_mode(BlendMode::Blend);
     let mut field = Field::new();
-    let mut is_paused = false;
+    let mut game_state = GameState::Play;
     let mut score = 0;
 
     let mut event_pump = sdl_context.event_pump().unwrap();
@@ -416,7 +438,7 @@ fn main() {
                 Event::KeyDown { keycode: Some(kc), .. } => {
                     match kc {
                         Keycode::Escape => break 'main_loop,
-                        Keycode::Left => if !is_paused {
+                        Keycode::Left => if game_state == GameState::Play {
                             // try moving falling blocks left
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -432,7 +454,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Right => if !is_paused {
+                        Keycode::Right => if game_state == GameState::Play {
                             // try moving falling blocks right
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -448,7 +470,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Up => if !is_paused {
+                        Keycode::Up => if game_state == GameState::Play {
                             // cycle through colors
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -469,7 +491,7 @@ fn main() {
                                     .color_index = new_color;
                             }
                         },
-                        Keycode::Down => if !is_paused {
+                        Keycode::Down => if game_state == GameState::Play {
                             // hand over descending blocks to gravity
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -489,10 +511,15 @@ fn main() {
                             }
                             score = 0;
                             block_fall_limit = DEFAULT_BLOCK_FALL_LIMIT;
+                            game_state = GameState::Play;
                         },
                         Keycode::F3 => {
                             // pause/unpause
-                            is_paused = !is_paused;
+                            game_state = match game_state {
+                                GameState::Over => GameState::Over,
+                                GameState::Play => GameState::Pause,
+                                GameState::Pause => GameState::Play,
+                            };
                         },
                         _ => {},
                     }
@@ -501,9 +528,9 @@ fn main() {
             }
         }
 
-        draw(&mut canvas, &field, is_paused, score, &color_stats);
+        draw(&mut canvas, &field, game_state, score, &color_stats);
 
-        if !is_paused {
+        if game_state == GameState::Play {
             let disappearing_block_coords = field
                 .block_coords_with_predicate(|bs| bs.is_disappearing());
             if disappearing_block_coords.len() > 0 {
@@ -549,7 +576,7 @@ fn main() {
                             } else {
                                 if !make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
                                     // GAME OVER
-                                    break 'main_loop;
+                                    game_state = GameState::Over;
                                 }
                             }
                         }
