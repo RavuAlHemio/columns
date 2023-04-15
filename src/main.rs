@@ -534,7 +534,7 @@ fn main() {
                 Event::KeyDown { keycode: Some(kc), .. } => {
                     match kc {
                         Keycode::Escape => break 'main_loop,
-                        Keycode::Left => if game_state == GameState::Play {
+                        Keycode::Left|Keycode::A|Keycode::J => if game_state == GameState::Play {
                             // try moving falling blocks left
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -550,7 +550,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Right => if game_state == GameState::Play {
+                        Keycode::Right|Keycode::D|Keycode::L => if game_state == GameState::Play {
                             // try moving falling blocks right
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -566,7 +566,7 @@ fn main() {
                                 }
                             }
                         },
-                        Keycode::Up => if game_state == GameState::Play {
+                        Keycode::Up|Keycode::W|Keycode::I => if game_state == GameState::Play {
                             // cycle through colors
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());
@@ -587,7 +587,7 @@ fn main() {
                                     .color_index = new_color;
                             }
                         },
-                        Keycode::Down => if game_state == GameState::Play {
+                        Keycode::Down|Keycode::S|Keycode::K => if game_state == GameState::Play {
                             // hand over descending blocks to gravity
                             let descending_block_coords = field
                                 .block_coords_with_predicate(|bs| bs.is_descending());

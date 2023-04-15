@@ -16,6 +16,8 @@ A Rust and SDL2-based revival of Duff Software's [Kolumz](https://archive.org/de
 
 * _Escape_: exit
 
+Apart from the arrow keys, the game also supports WASD (left hand) and IJKL (right hand) controls analogously.
+
 ## Credits
 
 ### Columns
