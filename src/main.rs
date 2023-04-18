@@ -67,6 +67,10 @@ enum GameState {
 
 #[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
 struct Opts {
+    /// Activates the drawing of lines over sequences to illustrate scoring more clearly.
+    #[arg(short, long)]
+    pub sequence_lines: bool,
+
     /// Feeds a specific seed to the random number generator.
     pub random_seed: Option<u128>,
 }
@@ -111,6 +115,7 @@ fn draw(
     )).unwrap();
 
     let blocks_and_coords = field.blocks().iter().zip(Field::coords());
+    let mut sequences = BTreeSet::new();
     for (field_block, (x, y)) in blocks_and_coords {
         if let FieldBlock::Block(block) = field_block {
             let base_color_index = usize::from(block.color_index);
@@ -134,6 +139,34 @@ fn draw(
                     actual_y,
                     BLOCK_WIDTH_PX,
                     BLOCK_HEIGHT_PX,
+                ),
+            ).unwrap();
+
+            if let Some(seq) = block.state.disappearing_sequence() {
+                if seq.len() > 0 {
+                    sequences.insert(Vec::from(seq));
+                }
+            }
+        }
+    }
+
+    let opts = OPTS.get().expect("OPTS not set?!");
+    if opts.sequence_lines {
+        // highlight sequences
+        for seq in sequences {
+            let &(first_x, first_y) = seq.first().unwrap();
+            let &(last_x, last_y) = seq.last().unwrap();
+
+            // draw a line between the two
+            canvas.set_draw_color(Color::WHITE);
+            canvas.draw_line(
+                (
+                    FIELD_OFFSET_LEFT_PX + i32::try_from(first_x * BLOCK_WIDTH_PX + BLOCK_WIDTH_PX/2).unwrap(),
+                    FIELD_OFFSET_TOP_PX + i32::try_from(first_y * BLOCK_HEIGHT_PX + BLOCK_HEIGHT_PX/2).unwrap(),
+                ),
+                (
+                    FIELD_OFFSET_LEFT_PX + i32::try_from(last_x * BLOCK_WIDTH_PX + BLOCK_WIDTH_PX/2).unwrap(),
+                    FIELD_OFFSET_TOP_PX + i32::try_from(last_y * BLOCK_HEIGHT_PX + BLOCK_HEIGHT_PX/2).unwrap(),
                 ),
             ).unwrap();
         }
@@ -389,19 +422,18 @@ fn handle_sequences(field: &mut Field, score: &mut u64) -> bool {
     }
 
     for sequence in &sequences {
+        // add to score
         *score += u64::try_from(sequence.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
-    }
 
-    // mark blocks from sequences as disappearing
-    let sequence_coords: BTreeSet<(u32, u32)> = sequences
-        .iter()
-        .flat_map(|seq| seq)
-        .map(|(x, y)| (*x, *y))
-        .collect();
-    for &(x, y) in &sequence_coords {
-        field.block_by_coord_mut(x, y)
-            .as_block_mut().unwrap()
-            .state = BlockState::Disappearing(DISAPPEAR_BLINK_COUNT);
+        // mark blocks from sequences as disappearing
+        for &(x, y) in sequence {
+            field.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .state = BlockState::Disappearing {
+                    counter: DISAPPEAR_BLINK_COUNT,
+                    sequence: sequence.clone(),
+                };
+        }
     }
 
     true
@@ -419,9 +451,11 @@ fn handle_disappearing_blocks(field: &mut Field, disappearing_block_coords: &[(u
         };
         if current_count > 0 {
             // reduce count by 1
-            field.block_by_coord_mut(x, y)
+            let counter_ref = field.block_by_coord_mut(x, y)
                 .as_block_mut().unwrap()
-                .state = BlockState::Disappearing(current_count - 1);
+                .state
+                .disappearing_counter_mut().unwrap();
+            *counter_ref = current_count - 1;
         } else {
             // disappear the block completely
             *field.block_by_coord_mut(x, y) = FieldBlock::Background;

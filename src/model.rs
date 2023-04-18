@@ -1,12 +1,12 @@
 use crate::{FIELD_BLOCK_COUNT, FIELD_HEIGHT_BLOCKS, FIELD_WIDTH_BLOCKS};
 
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum BlockState {
     #[default] Stationary,
     Descending,
     Gravity,
-    Disappearing(usize),
+    Disappearing { counter: usize, sequence: Vec<(u32, u32)> },
 }
 impl BlockState {
     pub fn is_stationary(&self) -> bool {
@@ -32,28 +32,42 @@ impl BlockState {
 
     pub fn is_disappearing(&self) -> bool {
         match self {
-            Self::Disappearing(_) => true,
+            Self::Disappearing { .. } => true,
             _ => false,
         }
     }
 
     pub fn disappearing_counter(&self) -> Option<usize> {
         match self {
-            Self::Disappearing(counter) => Some(*counter),
+            Self::Disappearing { counter, .. } => Some(*counter),
+            _ => None,
+        }
+    }
+
+    pub fn disappearing_counter_mut(&mut self) -> Option<&mut usize> {
+        match self {
+            Self::Disappearing { counter, .. } => Some(counter),
+            _ => None,
+        }
+    }
+
+    pub fn disappearing_sequence(&self) -> Option<&[(u32, u32)]> {
+        match self {
+            Self::Disappearing { sequence, .. } => Some(sequence.as_slice()),
             _ => None,
         }
     }
 }
 
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Block {
     pub color_index: u8,
     pub state: BlockState,
 }
 
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) enum FieldBlock {
     #[default] Background,
     Block(Block),
@@ -91,7 +105,7 @@ impl FieldBlock {
         match self {
             Self::Block(block) => match block.state {
                 BlockState::Stationary => true,
-                BlockState::Disappearing(_) => true,
+                BlockState::Disappearing { .. } => true,
                 _ => false,
             },
             _ => false,
@@ -100,14 +114,15 @@ impl FieldBlock {
 }
 
 
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Field {
     blocks: [FieldBlock; FIELD_BLOCK_COUNT],
 }
 impl Field {
     pub fn new() -> Self {
+        let blocks = std::array::from_fn(|_| FieldBlock::Background);
         Self {
-            blocks: [FieldBlock::Background; FIELD_BLOCK_COUNT],
+            blocks,
         }
     }
 
@@ -133,14 +148,14 @@ impl Field {
     pub fn coords() -> FieldCoords { FieldCoords::new() }
 
     /// Returns a vector of coordinates of the blocks that have the given state, in reverse order.
-    pub fn block_coords_with_predicate<F: FnMut(BlockState) -> bool>(&self, mut pred: F) -> Vec<(u32, u32)> {
+    pub fn block_coords_with_predicate<F: FnMut(&BlockState) -> bool>(&self, mut pred: F) -> Vec<(u32, u32)> {
         self
             .blocks()
             .iter()
             .zip(Self::coords())
             .rev()
             .filter_map(|(field_block, coords)| field_block.as_block().map(|b| (b, coords)))
-            .filter(|(block, _)| pred(block.state))
+            .filter(|(block, _)| pred(&block.state))
             .map(|(_, coords)| coords)
             .collect()
     }
@@ -154,9 +169,7 @@ impl Field {
 }
 impl Default for Field {
     fn default() -> Self {
-        Self {
-            blocks: [FieldBlock::Background; FIELD_BLOCK_COUNT],
-        }
+        Field::new()
     }
 }
 
