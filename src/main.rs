@@ -3,12 +3,13 @@ mod seg_display;
 
 
 use std::collections::{BTreeSet, VecDeque};
-use std::env;
 use std::iter::once;
 use std::thread::sleep;
 use std::time::Duration;
 
-use rand::SeedableRng;
+use clap::Parser;
+use once_cell::sync::OnceCell;
+use rand::{SeedableRng, thread_rng, Rng};
 use rand::distributions::{Distribution, Uniform};
 use rand::rngs::StdRng;
 use sdl2::event::{Event, WindowEvent};
@@ -54,11 +55,20 @@ const BLOCK_COLORS: [Color; BLOCK_COLOR_COUNT] = [
 ];
 
 
+static OPTS: OnceCell<Opts> = OnceCell::new();
+
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 enum GameState {
     #[default] Play,
     Pause,
     Over,
+}
+
+#[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
+struct Opts {
+    /// Feeds a specific seed to the random number generator.
+    pub random_seed: Option<u128>,
 }
 
 const fn mul_div(val: u8, numerator: u8, denominator: u8) -> u8 {
@@ -488,16 +498,22 @@ fn handle_descending_blocks(field: &mut Field, descending_block_coords: &[(u32, 
 
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
-    let mut rng = if args.len() > 1 {
-        let seed_integer: u128 = args[1].parse()
-            .expect("failed to parse RNG seed");
-        let mut rng_seed = [0u8; 32];
-        rng_seed[0..128/8].copy_from_slice(&seed_integer.to_be_bytes());
-        StdRng::from_seed(rng_seed)
-    } else {
-        StdRng::from_entropy()
+    let opts = Opts::parse();
+    let mut rng = {
+        let seed_value: u128 = if let Some(seed) = opts.random_seed {
+            seed
+        } else {
+            let mut trng = thread_rng();
+            trng.gen()
+        };
+        println!("RNG seed: {}", seed_value);
+
+        let mut rng_seed_bytes = [0u8; 32];
+        rng_seed_bytes[0..128/8].copy_from_slice(&seed_value.to_be_bytes());
+        StdRng::from_seed(rng_seed_bytes)
     };
+
+    OPTS.set(opts).expect("OPTS already set?!");
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();

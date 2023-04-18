@@ -4,5 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+once_cell = { version = "1.17" }
 rand = { version = "0.8" }
 sdl2 = { version = "0.35" }
+
+[dependencies.clap]
+version = "4.2"
+default-features = false
+features = [
+    "derive",
+    "help",
+    "std",
+    "usage",
+]
