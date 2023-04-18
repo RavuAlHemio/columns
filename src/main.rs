@@ -68,8 +68,12 @@ enum GameState {
 #[derive(Clone, Debug, Eq, Hash, Ord, Parser, PartialEq, PartialOrd)]
 struct Opts {
     /// Activates the drawing of lines over sequences to illustrate scoring more clearly.
-    #[arg(short, long)]
+    #[arg(short = 'l', long)]
     pub sequence_lines: bool,
+
+    /// Activates the drawing of shadows of the descending block.
+    #[arg(short, long)]
+    pub shadows: bool,
 
     /// Feeds a specific seed to the random number generator.
     pub random_seed: Option<u128>,
@@ -114,6 +118,48 @@ fn draw(
         BLOCK_HEIGHT_PX * FIELD_HEIGHT_BLOCKS + u32::try_from(2*FIELD_FRAME_OFFSET_PX).unwrap(),
     )).unwrap();
 
+    let opts = OPTS.get().expect("OPTS not set?!");
+    if opts.shadows {
+        // find the deepest descending block
+        let descending_blocks = field.block_coords_with_predicate(|b| b.is_descending());
+        if descending_blocks.len() > 0 {
+            let (deepest_x, deepest_y) = descending_blocks.iter()
+                .map(|xy| *xy)
+                .max_by_key(|(_, y)| *y)
+                .unwrap();
+
+            // see how deep we can drop it
+            let mut test_y = deepest_y;
+            while !field.block_at_coord_hit_bottom_or_stationary_block(deepest_x, test_y) {
+                test_y += 1;
+            }
+
+            let y_offset = test_y - deepest_y;
+
+            // draw the shadow there
+            for &(x, y) in &descending_blocks {
+                let shadow_color_index =
+                    BLOCK_COLOR_COUNT
+                    + 1
+                    + usize::from(field.block_by_coord(x, y).color_index().unwrap())
+                ;
+
+                let actual_x = FIELD_OFFSET_LEFT_PX + i32::try_from(x * BLOCK_WIDTH_PX).unwrap();
+                let actual_y = FIELD_OFFSET_TOP_PX + i32::try_from((y + y_offset) * BLOCK_HEIGHT_PX).unwrap();
+                canvas.copy(
+                    &block_textures[shadow_color_index],
+                    None,
+                    Rect::new(
+                        actual_x,
+                        actual_y,
+                        BLOCK_WIDTH_PX,
+                        BLOCK_HEIGHT_PX,
+                    ),
+                ).unwrap();
+            }
+        }
+    }
+
     let blocks_and_coords = field.blocks().iter().zip(Field::coords());
     let mut sequences = BTreeSet::new();
     for (field_block, (x, y)) in blocks_and_coords {
@@ -150,7 +196,6 @@ fn draw(
         }
     }
 
-    let opts = OPTS.get().expect("OPTS not set?!");
     if opts.sequence_lines {
         // highlight sequences
         for seq in sequences {
@@ -236,8 +281,15 @@ fn draw(
 }
 
 
+/// Creates block textures and returns them in a predefined sequence.
+///
+/// The sequence is:
+/// * 0..BLOCK_COLOR_COUNT: the individual block colors
+/// * BLOCK_COLOR_COUNT: the highlight color for successful sequences
+/// * BLOCK_COLOR_COUNT+1..BLOCK_COLOR_COUNT+1+BLOCK_COLOR_COUNT: translucent colors for the shadow
 fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>> {
-    let mut ret = Vec::with_capacity(BLOCK_COLOR_COUNT+1);
+    let mut ret = Vec::with_capacity(2*BLOCK_COLOR_COUNT+1);
+    let mut shadow_colors = Vec::with_capacity(BLOCK_COLOR_COUNT);
     for color in BLOCK_COLORS.into_iter().chain(once(Color::WHITE)) {
         let mid_color = mul_div_rgb(color, 4, 6);
         let dark_color = mul_div_rgb(color, 3, 6);
@@ -283,11 +335,17 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
 
         // squeeze into texture
         let mut texture_data = Vec::with_capacity(texture_colors.len() * 4);
+        let mut shadow_data = Vec::with_capacity(texture_colors.len() * 4);
         for color in texture_colors {
             texture_data.push(color.r);
             texture_data.push(color.g);
             texture_data.push(color.b);
             texture_data.push(color.a);
+
+            shadow_data.push(color.r / 3);
+            shadow_data.push(color.g / 3);
+            shadow_data.push(color.b / 3);
+            shadow_data.push(color.a);
         }
 
         let mut texture = creator.create_texture(
@@ -301,7 +359,25 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
             (BLOCK_WIDTH_PX * 4).try_into().unwrap(),
         ).unwrap();
         ret.push(texture);
+
+        // don't make a shadow for the highlight color
+        if shadow_colors.len() < BLOCK_COLOR_COUNT {
+            let mut shadow_texture = creator.create_texture(
+                Some(PixelFormatEnum::ABGR8888),
+                TextureAccess::Static,
+                BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX,
+            ).unwrap();
+            shadow_texture.update(
+                Rect::new(0, 0, BLOCK_WIDTH_PX, BLOCK_HEIGHT_PX),
+                &shadow_data,
+                (BLOCK_WIDTH_PX * 4).try_into().unwrap(),
+            ).unwrap();
+            shadow_colors.push(shadow_texture);
+        }
     }
+
+    ret.append(&mut shadow_colors);
+
     ret
 }
 
