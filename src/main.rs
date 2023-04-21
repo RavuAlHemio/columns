@@ -1,3 +1,4 @@
+mod ai;
 mod model;
 mod seg_display;
 
@@ -74,6 +75,10 @@ struct Opts {
     /// Activates the drawing of shadows of the descending block.
     #[arg(short, long)]
     pub shadows: bool,
+
+    /// Outputs best-rated moves on standard output.
+    #[arg(short, long)]
+    pub ai: bool,
 
     /// Feeds a specific seed to the random number generator.
     pub random_seed: Option<u128>,
@@ -382,96 +387,6 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
 }
 
 
-fn sequence_continues(field: &Field, x: u32, y: u32, dx: i32, dy: i32) -> Option<(u32, u32)> {
-    let this_color = match field.block_by_coord(x, y).as_block() {
-        Some(block) => block.color_index,
-        None => return None,
-    };
-
-    let next_x = i32::try_from(x).unwrap() + dx;
-    let next_y = i32::try_from(y).unwrap() + dy;
-
-    if next_x < 0 {
-        return None;
-    }
-    if next_x >= FIELD_WIDTH_BLOCKS.try_into().unwrap() {
-        return None;
-    }
-
-    if next_y < 0 {
-        return None;
-    }
-    if next_y >= FIELD_HEIGHT_BLOCKS.try_into().unwrap() {
-        return None;
-    }
-
-    let x2 = u32::try_from(next_x).unwrap();
-    let y2 = u32::try_from(next_y).unwrap();
-
-    let neighbor_color = match field.block_by_coord(x2, y2).as_block() {
-        Some(block) => block.color_index,
-        None => return None,
-    };
-
-    if this_color == neighbor_color {
-        Some((x2, y2))
-    } else {
-        None
-    }
-}
-
-
-fn find_sequence(field: &Field, x: u32, y: u32, dx: i32, dy: i32) -> Vec<(u32, u32)> {
-    assert!(dx != 0 || dy != 0);
-    assert!(x < FIELD_WIDTH_BLOCKS && y < FIELD_HEIGHT_BLOCKS);
-
-    let mut ret = Vec::new();
-    if field.block_by_coord(x, y).as_block().is_none() {
-        return ret; // no block here
-    };
-    ret.push((x, y));
-    loop {
-        let (last_x, last_y) = *ret.last().unwrap();
-        if let Some((x2, y2)) = sequence_continues(field, last_x, last_y, dx, dy) {
-            ret.push((x2, y2));
-        } else {
-            break;
-        }
-    }
-
-    ret
-}
-
-
-fn get_coordinates_of_sequences(field: &Field) -> Vec<Vec<(u32, u32)>> {
-    let settled_blocks = field.block_coords_with_predicate(|bs| bs.is_stationary());
-
-    let mut sequences = Vec::with_capacity(4);
-    for &(x, y) in &settled_blocks {
-        // when looking for new sequences, we only look in four directions;
-        // to ensure we don't count a sequence multiple times, we ensure there isn't a sequence in
-        // the other direction as well
-        if sequence_continues(field, x, y, -1, 0).is_none() { // left
-            sequences.push(find_sequence(field, x, y, 1, 0)); // right
-        }
-        if sequence_continues(field, x, y, -1, -1).is_none() { // up-left
-            sequences.push(find_sequence(field, x, y, 1, 1)); // down-right
-        }
-        if sequence_continues(field, x, y, 0, -1).is_none() { // up
-            sequences.push(find_sequence(field, x, y, 0, 1)); // down
-        }
-        if sequence_continues(field, x, y, 1, -1).is_none() { // up-right
-            sequences.push(find_sequence(field, x, y, -1, 1)); // down-left
-        }
-
-        // ensure our sequences are long enough
-        sequences.retain(|seq| seq.len() >= MINIMUM_SEQUENCE);
-    }
-
-    sequences
-}
-
-
 fn handle_gravity_blocks(field: &mut Field, gravity_block_coords: &[(u32, u32)]) {
     for &(x, y) in gravity_block_coords {
         if field.block_at_coord_hit_bottom_or_stationary_block(x, y) {
@@ -492,22 +407,23 @@ fn handle_gravity_blocks(field: &mut Field, gravity_block_coords: &[(u32, u32)])
 
 fn handle_sequences(field: &mut Field, score: &mut u64) -> bool {
     // find sequences
-    let sequences = get_coordinates_of_sequences(&field);
+    let sequences = field
+        .get_coordinates_of_sequences(|seq| seq.coordinates.len() >= MINIMUM_SEQUENCE);
     if sequences.len() == 0 {
         return false;
     }
 
     for sequence in &sequences {
         // add to score
-        *score += u64::try_from(sequence.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
+        *score += u64::try_from(sequence.coordinates.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
 
         // mark blocks from sequences as disappearing
-        for &(x, y) in sequence {
+        for &(x, y) in &sequence.coordinates {
             field.block_by_coord_mut(x, y)
                 .as_block_mut().unwrap()
                 .state = BlockState::Disappearing {
                     counter: DISAPPEAR_BLINK_COUNT,
-                    sequence: sequence.clone(),
+                    sequence: sequence.coordinates.clone(),
                 };
         }
     }
@@ -800,7 +716,13 @@ fn main() {
                                 // continue immediately
                                 block_fall_counter = block_fall_limit - 1;
                             } else {
-                                if !make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
+                                if make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
+                                    if OPTS.get().expect("OPTS not set?!").ai {
+                                        if let Some(best_move) = crate::ai::pick_best_move(&field) {
+                                            println!("AI says best move is: {:?}", best_move);
+                                        }
+                                    }
+                                } else {
                                     // GAME OVER
                                     game_state = GameState::Over;
 

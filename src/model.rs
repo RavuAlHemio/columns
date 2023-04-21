@@ -1,3 +1,5 @@
+use std::fmt;
+
 use crate::{FIELD_BLOCK_COUNT, FIELD_HEIGHT_BLOCKS, FIELD_WIDTH_BLOCKS};
 
 
@@ -166,10 +168,162 @@ impl Field {
         (y == FIELD_HEIGHT_BLOCKS - 1)
         || self.block_by_coord(x, y + 1).is_stationary_block()
     }
+
+    /// Swaps two blocks in the field.
+    pub fn swap_blocks(&mut self, x1: u32, y1: u32, x2: u32, y2: u32) {
+        unsafe {
+            let ptr1 = self.block_by_coord_mut(x1, y1) as *mut _;
+            let ptr2 = self.block_by_coord_mut(x2, y2) as *mut _;
+            std::ptr::swap(ptr1, ptr2);
+        }
+    }
+
+    /// Returns the coordinates of the next block if the sequence started by the given block
+    /// continues in the given direction.
+    pub fn sequence_continues(&self, x: u32, y: u32, dx: i32, dy: i32) -> Option<(u32, u32)> {
+        let this_color = self.block_by_coord(x, y).as_block()?.color_index;
+
+        let next_x = i32::try_from(x).unwrap() + dx;
+        let next_y = i32::try_from(y).unwrap() + dy;
+
+        if next_x < 0 {
+            return None;
+        }
+        if next_x >= FIELD_WIDTH_BLOCKS.try_into().unwrap() {
+            return None;
+        }
+
+        if next_y < 0 {
+            return None;
+        }
+        if next_y >= FIELD_HEIGHT_BLOCKS.try_into().unwrap() {
+            return None;
+        }
+
+        let x2 = u32::try_from(next_x).unwrap();
+        let y2 = u32::try_from(next_y).unwrap();
+
+        let neighbor_color = match self.block_by_coord(x2, y2).as_block() {
+            Some(block) => block.color_index,
+            None => return None,
+        };
+
+        if this_color == neighbor_color {
+            Some((x2, y2))
+        } else {
+            None
+        }
+    }
+
+    /// Finds all the coordinates of the sequence beginning at the given block and continuing in the
+    /// given direction.
+    pub fn find_sequence(&self, x: u32, y: u32, dx: i32, dy: i32) -> Sequence {
+        assert!(dx != 0 || dy != 0);
+        assert!(x < FIELD_WIDTH_BLOCKS && y < FIELD_HEIGHT_BLOCKS);
+
+        let mut coords = Vec::new();
+        if self.block_by_coord(x, y).as_block().is_none() {
+            return Sequence::new(coords, true); // no block here
+        };
+        coords.push((x, y));
+        loop {
+            let (last_x, last_y) = *coords.last().unwrap();
+            if let Some((x2, y2)) = self.sequence_continues(last_x, last_y, dx, dy) {
+                coords.push((x2, y2));
+            } else {
+                break;
+            }
+        }
+
+        // check if our sequence can be extended on either side
+        let mut sequence_extensible = false;
+        let (last_x, last_y) = *coords.last().unwrap();
+        let more_x = i32::try_from(last_x).unwrap() + dx;
+        let more_y = i32::try_from(last_y).unwrap() + dy;
+        if more_x >= 0 && more_x < i32::try_from(FIELD_WIDTH_BLOCKS).unwrap() {
+            if more_y >= 0 && more_y < i32::try_from(FIELD_HEIGHT_BLOCKS).unwrap() {
+                if self.block_by_coord(more_x.try_into().unwrap(), more_y.try_into().unwrap()).is_background() {
+                    sequence_extensible = true;
+                }
+            }
+        }
+        if !sequence_extensible {
+            // try the beginning
+            let (first_x, first_y) = *coords.first().unwrap();
+            let less_x = i32::try_from(first_x).unwrap() - dx;
+            let less_y = i32::try_from(first_y).unwrap() - dy;
+            if less_x >= 0 && less_x < i32::try_from(FIELD_WIDTH_BLOCKS).unwrap() {
+                if less_y >= 0 && less_y < i32::try_from(FIELD_HEIGHT_BLOCKS).unwrap() {
+                    if self.block_by_coord(less_x.try_into().unwrap(), less_y.try_into().unwrap()).is_background() {
+                        sequence_extensible = true;
+                    }
+                }
+            }
+        }
+
+        Sequence::new(coords, sequence_extensible)
+    }
+
+    /// Gets all sequences on the field as vectors of their blocks' coordinates.
+    pub fn get_coordinates_of_sequences<P: FnMut(&Sequence) -> bool>(&self, mut predicate: P) -> Vec<Sequence> {
+        let settled_blocks = self.block_coords_with_predicate(|bs| bs.is_stationary());
+
+        let mut sequences = Vec::with_capacity(4);
+        for &(x, y) in &settled_blocks {
+            // when looking for new sequences, we only look in four directions;
+            // to ensure we don't count a sequence multiple times, we ensure there isn't a sequence in
+            // the other direction as well
+            if self.sequence_continues(x, y, -1, 0).is_none() { // left
+                sequences.push(self.find_sequence(x, y, 1, 0)); // right
+            }
+            if self.sequence_continues(x, y, -1, -1).is_none() { // up-left
+                sequences.push(self.find_sequence(x, y, 1, 1)); // down-right
+            }
+            if self.sequence_continues(x, y, 0, -1).is_none() { // up
+                sequences.push(self.find_sequence(x, y, 0, 1)); // down
+            }
+            if self.sequence_continues(x, y, 1, -1).is_none() { // up-right
+                sequences.push(self.find_sequence(x, y, -1, 1)); // down-left
+            }
+
+            // ensure our sequences are long enough
+            sequences.retain(&mut predicate);
+        }
+
+        sequences
+    }
 }
 impl Default for Field {
     fn default() -> Self {
         Field::new()
+    }
+}
+impl fmt::Display for Field {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\u{250C}")?;
+        for _ in 0..FIELD_WIDTH_BLOCKS {
+            write!(f, "\u{2500}")?;
+        }
+        writeln!(f, "\u{2510}")?;
+
+        for y in 0..FIELD_HEIGHT_BLOCKS {
+            write!(f, "\u{2502}")?;
+            for x in 0..FIELD_WIDTH_BLOCKS {
+                match self.block_by_coord(x, y) {
+                    FieldBlock::Background => write!(f, " ")?,
+                    FieldBlock::Block(block) => write!(f, "{}", block.color_index)?,
+                }
+            }
+            writeln!(f, "\u{2502}")?;
+        }
+
+        write!(f, "\u{2514}")?;
+        for _ in 0..FIELD_WIDTH_BLOCKS {
+            write!(f, "\u{2500}")?;
+        }
+        writeln!(f, "\u{2518}")?;
+
+        Ok(())
     }
 }
 
@@ -226,6 +380,24 @@ impl DoubleEndedIterator for FieldCoords {
         self.length -= 1;
         let coords = self.coords_for_index(self.length.try_into().unwrap());
         Some(coords)
+    }
+}
+
+
+#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct Sequence {
+    pub coordinates: Vec<(u32, u32)>,
+    pub extensible: bool,
+}
+impl Sequence {
+    pub fn new(
+        coordinates: Vec<(u32, u32)>,
+        extensible: bool,
+    ) -> Self {
+        Self {
+            coordinates,
+            extensible,
+        }
     }
 }
 
