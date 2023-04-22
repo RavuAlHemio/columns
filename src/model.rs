@@ -1,6 +1,12 @@
 use std::fmt;
 
-use crate::{FIELD_BLOCK_COUNT, FIELD_HEIGHT_BLOCKS, FIELD_WIDTH_BLOCKS};
+use rand::distributions::{Distribution, Uniform};
+use rand::rngs::StdRng;
+
+use crate::{
+    BLOCK_COLOR_COUNT, DISAPPEAR_BLINK_COUNT, FIELD_BLOCK_COUNT, FIELD_HEIGHT_BLOCKS,
+    FIELD_WIDTH_BLOCKS, MINIMUM_SEQUENCE, NEW_BLOCK_COLUMN,
+};
 
 
 #[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -291,6 +297,156 @@ impl Field {
         }
 
         sequences
+    }
+
+    pub fn disappear_scoring_sequences(&mut self, score: &mut u64) -> bool {
+        let sequences = self
+            .get_coordinates_of_sequences(|seq| seq.coordinates.len() >= MINIMUM_SEQUENCE);
+        if sequences.len() == 0 {
+            return false;
+        }
+
+        for sequence in &sequences {
+            // add to score
+            *score += u64::try_from(sequence.coordinates.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
+
+            // mark blocks from sequences as disappearing
+            for &(x, y) in &sequence.coordinates {
+                self.block_by_coord_mut(x, y)
+                    .as_block_mut().unwrap()
+                    .state = BlockState::Disappearing {
+                        counter: DISAPPEAR_BLINK_COUNT,
+                        sequence: sequence.coordinates.clone(),
+                    };
+            }
+        }
+
+        true
+    }
+
+    pub fn descend_gravity_blocks(&mut self) -> bool {
+        let gravity_blocks = self
+            .block_coords_with_predicate(|b| b.is_pulled_by_gravity());
+        let mut block_moved = false;
+        for (x, y) in gravity_blocks {
+            if self.block_at_coord_hit_bottom_or_stationary_block(x, y) {
+                // we are no longer being pulled by gravity
+                // mark this block as stationary
+                self.block_by_coord_mut(x, y)
+                    .as_block_mut().unwrap()
+                    .state = BlockState::Stationary;
+            } else {
+                self.swap_blocks(x, y, x, y + 1);
+                block_moved = true;
+            }
+        }
+        block_moved
+    }
+
+    pub fn immediately_drop_gravity_blocks(&mut self) {
+        while self.descend_gravity_blocks() {
+            // keep going
+        }
+    }
+
+    pub fn reduce_disappearing_blocks(&mut self) {
+        let disappearing_block_coords = self
+            .block_coords_with_predicate(|b| b.is_disappearing());
+        for (x, y) in disappearing_block_coords {
+            let current_count = match self.block_by_coord(x, y).as_block() {
+                Some(b) => match b.state.disappearing_counter() {
+                    Some(dc) => dc,
+                    None => continue,
+                },
+                None => continue,
+            };
+            if current_count > 0 {
+                // reduce count by 1
+                let counter_ref = self.block_by_coord_mut(x, y)
+                    .as_block_mut().unwrap()
+                    .state
+                    .disappearing_counter_mut().unwrap();
+                *counter_ref = current_count - 1;
+            } else {
+                // disappear the block completely and impose gravity on the blocks above
+                *self.block_by_coord_mut(x, y) = FieldBlock::Background;
+                self.impose_gravity_on_blocks_above_coord(x, y);
+            }
+        }
+    }
+
+    pub fn immediately_remove_disappearing_blocks(&mut self) {
+        let disappearing_block_coords = self
+            .block_coords_with_predicate(|b| b.is_disappearing());
+        for (x, y) in disappearing_block_coords {
+            // disappear the block completely and impose gravity on the blocks above
+            *self.block_by_coord_mut(x, y) = FieldBlock::Background;
+            self.impose_gravity_on_blocks_above_coord(x, y);
+        }
+    }
+
+    pub fn impose_gravity_on_blocks_above_coord(&mut self, x: u32, y: u32) {
+        // mark all blocks above as pulled-by-gravity unless they are also disappearing
+        for above_y in 0..y {
+            if let Some(block) = self.block_by_coord_mut(x, above_y).as_block_mut() {
+                if !block.state.is_disappearing() {
+                    block.state = BlockState::Gravity;
+                }
+            }
+        }
+    }
+
+    pub fn make_new_descending_block(
+        &mut self,
+        color_distribution: &Uniform<u8>,
+        rng: &mut StdRng,
+        color_stats: &mut [u32; BLOCK_COLOR_COUNT],
+    ) -> bool {
+        // is there even space?
+        let has_space_for_new_block =
+            self.block_by_coord(NEW_BLOCK_COLUMN, 0).is_background()
+            && self.block_by_coord(NEW_BLOCK_COLUMN, 1).is_background()
+            && self.block_by_coord(NEW_BLOCK_COLUMN, 2).is_background()
+        ;
+        if !has_space_for_new_block {
+            return false;
+        }
+
+        // pick out three colors at random
+        let color0 = color_distribution.sample(rng);
+        let color1 = color_distribution.sample(rng);
+        let color2 = color_distribution.sample(rng);
+
+        color_stats[usize::from(color0)] += 1;
+        color_stats[usize::from(color1)] += 1;
+        color_stats[usize::from(color2)] += 1;
+
+        *self.block_by_coord_mut(NEW_BLOCK_COLUMN, 0) = FieldBlock::Block(Block {
+            color_index: color0,
+            state: BlockState::Descending,
+        });
+        *self.block_by_coord_mut(NEW_BLOCK_COLUMN, 1) = FieldBlock::Block(Block {
+            color_index: color1,
+            state: BlockState::Descending,
+        });
+        *self.block_by_coord_mut(NEW_BLOCK_COLUMN, 2) = FieldBlock::Block(Block {
+            color_index: color2,
+            state: BlockState::Descending,
+        });
+        true
+    }
+
+    pub fn tower_height(&self, x: u32) -> u32 {
+        let mut tower_height = 0;
+        for y in (0..FIELD_HEIGHT_BLOCKS).rev() {
+            if self.block_by_coord(x, y).is_background() {
+                // top of tower reached
+                break;
+            } else {
+                tower_height += 1;
+            }
+        }
+        tower_height
     }
 }
 impl Default for Field {

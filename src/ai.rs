@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::{FIELD_HEIGHT_BLOCKS, FIELD_WIDTH_BLOCKS, MINIMUM_SEQUENCE};
+use crate::{FIELD_WIDTH_BLOCKS, MINIMUM_SEQUENCE};
 use crate::model::{BlockState, Field, FieldBlock};
 
 
@@ -52,42 +52,41 @@ fn drop_descending_blocks(field: &mut Field) {
 }
 
 
-fn rate_field(field: &Field) -> i64 {
-    const SCORING_SEQUENCE_WEIGHT: i64 = 3;
-    const EXTENSIBLE_SEQUENCE_WEIGHT: i64 = 1;
-    const MAX_TOWER_HEIGHT_WEIGHT: i64 = -3;
+fn rate_field(field: &Field) -> Vec<i64> {
+    let mut criteria: Vec<i64> = Vec::new();
 
-    let mut total_rating = 0;
-
-    // find all actual sequences (more than one)
-    let sequences = field
-        .get_coordinates_of_sequences(|seq| seq.coordinates.len() > 1);
-    for seq in &sequences {
-        if seq.coordinates.len() >= MINIMUM_SEQUENCE {
-            total_rating += i64::try_from(seq.coordinates.len()).unwrap() * SCORING_SEQUENCE_WEIGHT;
-        } else if seq.extensible {
-            // can we at least continue the sequence with a later block?
-            total_rating += i64::try_from(seq.coordinates.len()).unwrap() * EXTENSIBLE_SEQUENCE_WEIGHT;
+    // the first criterion is the score
+    let mut field_score = 0;
+    let scoring_sequences = field
+        .get_coordinates_of_sequences(|seq| seq.coordinates.len() >= MINIMUM_SEQUENCE);
+    if scoring_sequences.len() > 0 {
+        // simulate what this would do
+        let mut scoring_field = field.clone();
+        while scoring_field.disappear_scoring_sequences(&mut field_score) {
+            scoring_field.immediately_remove_disappearing_blocks();
+            scoring_field.immediately_drop_gravity_blocks();
         }
     }
+    criteria.push(field_score.try_into().unwrap());
 
-    // check tower heights
-    let mut max_tower_height = 0;
+    // the next criterion is the number of extensible sequences
+    let ext_seq_count = field
+        .get_coordinates_of_sequences(|seq| seq.coordinates.len() > 1)
+        .iter()
+        .filter(|seq| seq.extensible)
+        .count();
+    criteria.push(ext_seq_count.try_into().unwrap());
+
+    // the next criterion is the height of the highest tower
+    // (negated to ensure lowest = best)
+    let mut max_tower_height: i64 = 0;
     for x in 0..FIELD_WIDTH_BLOCKS {
-        let mut tower_height = 0;
-        for y in (0..FIELD_HEIGHT_BLOCKS).rev() {
-            if field.block_by_coord(x, y).is_background() {
-                // top of tower; go to the next one
-                break;
-            } else {
-                tower_height += 1;
-            }
-        }
+        let tower_height: i64 = field.tower_height(x).try_into().unwrap();
         max_tower_height = max_tower_height.max(tower_height);
     }
-    total_rating += max_tower_height * MAX_TOWER_HEIGHT_WEIGHT;
+    criteria.push(-max_tower_height);
 
-    total_rating
+    criteria
 }
 
 
@@ -110,7 +109,8 @@ pub(crate) fn pick_best_move(base_field: &Field) -> Option<BestMove> {
             // ... unless those fields are already filled
             let mut already_filled = false;
             for &(_x, y) in &desc_blocks {
-                if !columned_field.block_by_coord(column, y).is_background() {
+                let block = columned_field.block_by_coord(column, y);
+                if !block.is_background() && !block.as_block().unwrap().state.is_descending() {
                     already_filled = true;
                     break;
                 }
@@ -143,6 +143,6 @@ pub(crate) fn pick_best_move(base_field: &Field) -> Option<BestMove> {
 
     // pick the best field by rating
     fields_ratings.into_iter()
-        .max_by_key(|(_field, _best_move, rating)| *rating)
+        .max_by_key(|(_field, _best_move, rating)| rating.clone())
         .map(|(_field, best_move, _rating)| best_move)
 }

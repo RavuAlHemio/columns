@@ -387,84 +387,6 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
 }
 
 
-fn handle_gravity_blocks(field: &mut Field, gravity_block_coords: &[(u32, u32)]) {
-    for &(x, y) in gravity_block_coords {
-        if field.block_at_coord_hit_bottom_or_stationary_block(x, y) {
-            // we are no longer being pulled by gravity
-            // mark this block as stationary
-            field.block_by_coord_mut(x, y)
-                .as_block_mut().unwrap()
-                .state = BlockState::Stationary;
-        } else {
-            // drop this block by 1
-            let this_block = field.block_by_coord(x, y);
-            *field.block_by_coord_mut(x, y + 1) = this_block.clone();
-            *field.block_by_coord_mut(x, y) = FieldBlock::Background;
-        }
-    }
-}
-
-
-fn handle_sequences(field: &mut Field, score: &mut u64) -> bool {
-    // find sequences
-    let sequences = field
-        .get_coordinates_of_sequences(|seq| seq.coordinates.len() >= MINIMUM_SEQUENCE);
-    if sequences.len() == 0 {
-        return false;
-    }
-
-    for sequence in &sequences {
-        // add to score
-        *score += u64::try_from(sequence.coordinates.len() - (MINIMUM_SEQUENCE - 1)).unwrap();
-
-        // mark blocks from sequences as disappearing
-        for &(x, y) in &sequence.coordinates {
-            field.block_by_coord_mut(x, y)
-                .as_block_mut().unwrap()
-                .state = BlockState::Disappearing {
-                    counter: DISAPPEAR_BLINK_COUNT,
-                    sequence: sequence.coordinates.clone(),
-                };
-        }
-    }
-
-    true
-}
-
-
-fn handle_disappearing_blocks(field: &mut Field, disappearing_block_coords: &[(u32, u32)]) {
-    for &(x, y) in disappearing_block_coords {
-        let current_count = match field.block_by_coord(x, y).as_block() {
-            Some(b) => match b.state.disappearing_counter() {
-                Some(dc) => dc,
-                None => continue,
-            },
-            None => continue,
-        };
-        if current_count > 0 {
-            // reduce count by 1
-            let counter_ref = field.block_by_coord_mut(x, y)
-                .as_block_mut().unwrap()
-                .state
-                .disappearing_counter_mut().unwrap();
-            *counter_ref = current_count - 1;
-        } else {
-            // disappear the block completely
-            *field.block_by_coord_mut(x, y) = FieldBlock::Background;
-
-            // mark all blocks above as pulled-by-gravity unless they are also disappearing
-            for above_y in 0..y {
-                if let Some(block) = field.block_by_coord_mut(x, above_y).as_block_mut() {
-                    if !block.state.is_disappearing() {
-                        block.state = BlockState::Gravity;
-                    }
-                }
-            }
-        }
-    }
-}
-
-
 fn make_new_descending_block(
     field: &mut Field,
     color_distribution: &Uniform<u8>,
@@ -677,7 +599,7 @@ fn main() {
                 .block_coords_with_predicate(|bs| bs.is_disappearing());
             if disappearing_block_coords.len() > 0 {
                 // count down
-                handle_disappearing_blocks(&mut field, &disappearing_block_coords);
+                field.reduce_disappearing_blocks();
 
                 // continue immediately
                 block_fall_counter = block_fall_limit;
@@ -685,7 +607,7 @@ fn main() {
                 let gravity_block_coords = field
                     .block_coords_with_predicate(|bs| bs.is_pulled_by_gravity());
                 if gravity_block_coords.len() > 0 {
-                    handle_gravity_blocks(&mut field, &gravity_block_coords);
+                    field.descend_gravity_blocks();
 
                     // continue immediately
                     block_fall_counter = block_fall_limit;
@@ -703,7 +625,7 @@ fn main() {
 
                             // any sequences?
                             let old_score_divided = score / SCORE_SPEEDUP_DIVISOR;
-                            let sequences_found = handle_sequences(&mut field, &mut score);
+                            let sequences_found = field.disappear_scoring_sequences(&mut score);
                             if sequences_found {
                                 if block_fall_limit > 1 {
                                     let new_score_divided = score / SCORE_SPEEDUP_DIVISOR;
