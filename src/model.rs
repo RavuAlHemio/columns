@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fmt;
 
 use rand::distributions::{Distribution, Uniform};
@@ -434,6 +435,67 @@ impl Field {
             state: BlockState::Descending,
         });
         true
+    }
+
+    pub fn rotate_descending_blocks(&mut self) {
+        let descending_block_coords = self
+            .block_coords_with_predicate(|bs| bs.is_descending());
+        let mut queue = VecDeque::with_capacity(descending_block_coords.len());
+        for &(x, y) in &descending_block_coords {
+            queue.push_back(
+                self.block_by_coord(x, y)
+                    .as_block().unwrap()
+                    .color_index
+            );
+        }
+        if let Some(first_color) = queue.pop_front() {
+            queue.push_back(first_color);
+        }
+        for (&(x, y), &new_color) in descending_block_coords.iter().zip(queue.iter()) {
+            self.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .color_index = new_color;
+        }
+    }
+
+    pub fn hand_descending_blocks_to_gravity(&mut self) {
+        let descending_block_coords = self
+            .block_coords_with_predicate(|bs| bs.is_descending());
+        for &(x, y) in descending_block_coords.iter() {
+            self.block_by_coord_mut(x, y)
+                .as_block_mut().unwrap()
+                .state = BlockState::Gravity;
+        }
+    }
+
+    pub fn move_descending_blocks_left(&mut self) {
+        let descending_block_coords = self
+            .block_coords_with_predicate(|bs| bs.is_descending());
+        let can_move = descending_block_coords.iter()
+            .all(|&(x, y)|
+                x > 0
+                && self.block_by_coord(x - 1, y).is_background()
+            );
+        if can_move {
+            for (x, y) in descending_block_coords {
+                self.swap_blocks(x - 1, y, x, y);
+            }
+        }
+    }
+
+    pub fn move_descending_blocks_right(&mut self) {
+        let descending_block_coords = self
+            .block_coords_with_predicate(|bs| bs.is_descending());
+        let can_move = descending_block_coords.iter()
+            .all(|&(x, y)|
+                x < FIELD_WIDTH_BLOCKS - 1
+                && self.block_by_coord(x + 1, y).is_background()
+            );
+        if can_move {
+            for (x, y) in descending_block_coords {
+                self.swap_blocks(x + 1, y, x, y);
+            }
+        }
     }
 
     pub fn tower_height(&self, x: u32) -> u32 {

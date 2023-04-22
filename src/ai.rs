@@ -1,7 +1,5 @@
-use std::collections::VecDeque;
-
 use crate::{FIELD_WIDTH_BLOCKS, MINIMUM_SEQUENCE};
-use crate::model::{BlockState, Field, FieldBlock};
+use crate::model::Field;
 
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -12,44 +10,11 @@ pub struct BestMove {
 
 
 fn rotate_descending_blocks(field: &mut Field, count: usize) {
-    let desc_block_coords = field
-        .block_coords_with_predicate(|b| b.is_descending());
-    if desc_block_coords.len() == 0 {
-        return;
-    }
-
     for _ in 0..count {
-        let mut desc_blocks: VecDeque<FieldBlock> = desc_block_coords.iter()
-            .map(|&(x, y)| field.block_by_coord(x, y).clone())
-            .collect();
-        let front_block = desc_blocks.pop_front().unwrap();
-        desc_blocks.push_back(front_block);
-        for (&(x, y), block) in desc_block_coords.iter().zip(desc_blocks.into_iter()) {
-            *field.block_by_coord_mut(x, y) = block;
-        }
+        field.rotate_descending_blocks();
     }
 }
 
-
-fn drop_descending_blocks(field: &mut Field) {
-    let desc_block_coords = field
-        .block_coords_with_predicate(|b| b.is_descending());
-    // deepest blocks are returned first
-
-    for (x, y) in desc_block_coords {
-        let mut new_y = y;
-        while !field.block_at_coord_hit_bottom_or_stationary_block(x, new_y) {
-            new_y += 1;
-        }
-        field.swap_blocks(
-            x, y,
-            x, new_y,
-        );
-        field.block_by_coord_mut(x, new_y)
-            .as_block_mut().unwrap()
-            .state = BlockState::Stationary;
-    }
-}
 
 
 fn rate_field(field: &Field) -> Vec<i64> {
@@ -125,7 +90,8 @@ pub(crate) fn pick_best_move(base_field: &Field) -> Option<BestMove> {
             }
 
             // now, drop the descending blocks
-            drop_descending_blocks(&mut columned_field);
+            columned_field.hand_descending_blocks_to_gravity();
+            columned_field.immediately_drop_gravity_blocks();
 
             // how good is this state?
             let rating = rate_field(&columned_field);

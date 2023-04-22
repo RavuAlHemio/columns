@@ -3,7 +3,7 @@ mod model;
 mod seg_display;
 
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::iter::once;
 use std::thread::sleep;
 use std::time::Duration;
@@ -11,7 +11,7 @@ use std::time::Duration;
 use clap::Parser;
 use once_cell::sync::OnceCell;
 use rand::{SeedableRng, thread_rng, Rng};
-use rand::distributions::{Distribution, Uniform};
+use rand::distributions::Uniform;
 use rand::rngs::StdRng;
 use sdl2::event::{Event, WindowEvent};
 use sdl2::keyboard::Keycode;
@@ -20,7 +20,7 @@ use sdl2::rect::Rect;
 use sdl2::render::{BlendMode, Canvas, Texture, TextureAccess, TextureCreator};
 use sdl2::video::Window;
 
-use crate::model::{Block, BlockState, Field, FieldBlock};
+use crate::model::{BlockState, Field, FieldBlock};
 use crate::seg_display::SegmentedDisplay;
 
 
@@ -387,47 +387,6 @@ fn make_block_textures<'a, T>(creator: &'a TextureCreator<T>) -> Vec<Texture<'a>
 }
 
 
-fn make_new_descending_block(
-    field: &mut Field,
-    color_distribution: &Uniform<u8>,
-    rng: &mut StdRng,
-    color_stats: &mut [u32; BLOCK_COLOR_COUNT],
-) -> bool {
-    // is there even space?
-    let has_space_for_new_block =
-        field.block_by_coord(NEW_BLOCK_COLUMN, 0).is_background()
-        && field.block_by_coord(NEW_BLOCK_COLUMN, 1).is_background()
-        && field.block_by_coord(NEW_BLOCK_COLUMN, 2).is_background()
-    ;
-    if !has_space_for_new_block {
-        false
-    } else {
-        // pick out three colors at random
-        let color0 = color_distribution.sample(rng);
-        let color1 = color_distribution.sample(rng);
-        let color2 = color_distribution.sample(rng);
-
-        color_stats[usize::from(color0)] += 1;
-        color_stats[usize::from(color1)] += 1;
-        color_stats[usize::from(color2)] += 1;
-
-        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 0) = FieldBlock::Block(Block {
-            color_index: color0,
-            state: BlockState::Descending,
-        });
-        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 1) = FieldBlock::Block(Block {
-            color_index: color1,
-            state: BlockState::Descending,
-        });
-        *field.block_by_coord_mut(NEW_BLOCK_COLUMN, 2) = FieldBlock::Block(Block {
-            color_index: color2,
-            state: BlockState::Descending,
-        });
-        true
-    }
-}
-
-
 fn handle_descending_blocks(field: &mut Field, descending_block_coords: &[(u32, u32)]) {
     for &(x, y) in descending_block_coords {
         let this_block = field.block_by_coord(x, y);
@@ -499,67 +458,17 @@ fn main() {
                     match kc {
                         Keycode::Escape => break 'main_loop,
                         Keycode::Left|Keycode::A|Keycode::J => if game_state == GameState::Play {
-                            // try moving falling blocks left
-                            let descending_block_coords = field
-                                .block_coords_with_predicate(|bs| bs.is_descending());
-                            let can_move = descending_block_coords.iter()
-                                .all(|&(x, y)|
-                                    x > 0
-                                    && field.block_by_coord(x - 1, y).is_background()
-                                );
-                            if can_move {
-                                for (x, y) in descending_block_coords {
-                                    *field.block_by_coord_mut(x - 1, y) = field.block_by_coord(x, y).clone();
-                                    *field.block_by_coord_mut(x, y) = FieldBlock::Background;
-                                }
-                            }
+                            field.move_descending_blocks_left();
                         },
                         Keycode::Right|Keycode::D|Keycode::L => if game_state == GameState::Play {
-                            // try moving falling blocks right
-                            let descending_block_coords = field
-                                .block_coords_with_predicate(|bs| bs.is_descending());
-                            let can_move = descending_block_coords.iter()
-                                .all(|&(x, y)|
-                                    x < FIELD_WIDTH_BLOCKS - 1
-                                    && field.block_by_coord(x + 1, y).is_background()
-                                );
-                            if can_move {
-                                for (x, y) in descending_block_coords {
-                                    *field.block_by_coord_mut(x + 1, y) = field.block_by_coord(x, y).clone();
-                                    *field.block_by_coord_mut(x, y) = FieldBlock::Background;
-                                }
-                            }
+                            field.move_descending_blocks_right();
                         },
                         Keycode::Up|Keycode::W|Keycode::I => if game_state == GameState::Play {
                             // cycle through colors
-                            let descending_block_coords = field
-                                .block_coords_with_predicate(|bs| bs.is_descending());
-                            let mut queue = VecDeque::with_capacity(descending_block_coords.len());
-                            for &(x, y) in &descending_block_coords {
-                                queue.push_back(
-                                    field.block_by_coord(x, y)
-                                        .as_block().unwrap()
-                                        .color_index
-                                );
-                            }
-                            if let Some(first_color) = queue.pop_front() {
-                                queue.push_back(first_color);
-                            }
-                            for (&(x, y), &new_color) in descending_block_coords.iter().zip(queue.iter()) {
-                                field.block_by_coord_mut(x, y)
-                                    .as_block_mut().unwrap()
-                                    .color_index = new_color;
-                            }
+                            field.rotate_descending_blocks();
                         },
                         Keycode::Down|Keycode::S|Keycode::K => if game_state == GameState::Play {
-                            // hand over descending blocks to gravity
-                            let descending_block_coords = field
-                                .block_coords_with_predicate(|bs| bs.is_descending());
-                            for &(x, y) in descending_block_coords.iter() {
-                                field.block_by_coord_mut(x, y)
-                                    .as_block_mut().unwrap()
-                                    .state = BlockState::Gravity;
-                            }
+                            field.hand_descending_blocks_to_gravity();
                         },
                         Keycode::F2 => {
                             // restart game
@@ -638,7 +547,7 @@ fn main() {
                                 // continue immediately
                                 block_fall_counter = block_fall_limit - 1;
                             } else {
-                                if make_new_descending_block(&mut field, &color_distribution, &mut rng, &mut color_stats) {
+                                if field.make_new_descending_block(&color_distribution, &mut rng, &mut color_stats) {
                                     if OPTS.get().expect("OPTS not set?!").ai {
                                         if let Some(best_move) = crate::ai::pick_best_move(&field) {
                                             println!("AI says best move is: {:?}", best_move);
