@@ -80,6 +80,10 @@ struct Opts {
     #[arg(short, long)]
     pub ai: bool,
 
+    /// Automatically plays using the best moves as calculated by the AI.
+    #[arg(short = 'A', long)]
+    pub autoplay: bool,
+
     /// Feeds a specific seed to the random number generator.
     pub random_seed: Option<u128>,
 }
@@ -548,9 +552,28 @@ fn main() {
                                 block_fall_counter = block_fall_limit - 1;
                             } else {
                                 if field.make_new_descending_block(&color_distribution, &mut rng, &mut color_stats) {
-                                    if OPTS.get().expect("OPTS not set?!").ai {
+                                    let opts = OPTS.get().expect("OPTS not set?!");
+                                    if opts.ai || opts.autoplay {
                                         if let Some(best_move) = crate::ai::pick_best_move(&field) {
-                                            println!("AI says best move is: {:?}", best_move);
+                                            if opts.ai {
+                                                println!("AI says best move is: {:?}", best_move);
+                                            }
+                                            if opts.autoplay {
+                                                // transform the descending block as such
+                                                let column_delta = i32::try_from(best_move.column).unwrap() - i32::try_from(NEW_BLOCK_COLUMN).unwrap();
+                                                if column_delta > 0 {
+                                                    for _ in 0..column_delta {
+                                                        field.move_descending_blocks_right();
+                                                    }
+                                                } else if column_delta < 0 {
+                                                    for _ in 0..(-column_delta) {
+                                                        field.move_descending_blocks_left();
+                                                    }
+                                                }
+                                                for _ in 0..best_move.rotate_count {
+                                                    field.rotate_descending_blocks();
+                                                }
+                                            }
                                         }
                                     }
                                 } else {
