@@ -600,6 +600,22 @@ fn main() {
         }
 
         if game_state == GameState::Play || force_draw {
+            // regulate color stats
+            if color_stats.iter().any(|stat| *stat >= (FIELD_HEIGHT_BLOCKS - 1) * BLOCK_HEIGHT_PX) {
+                let delta = color_stats.iter().map(|stat| *stat).min().unwrap();
+                if delta == 0 {
+                    // pathological case where some color simply didn't appear often enough
+                    // just reset all the stats
+                    for color_stat in &mut color_stats {
+                        *color_stat = 0;
+                    }
+                } else {
+                    for color_stat in &mut color_stats {
+                        *color_stat -= delta;
+                    }
+                }
+            }
+
             draw(&mut canvas, &field, game_state, score, &color_stats, &block_textures);
             canvas.present();
         }
