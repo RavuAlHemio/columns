@@ -84,6 +84,10 @@ struct Opts {
     #[arg(short = 'A', long)]
     pub autoplay: bool,
 
+    /// If autoplay is on, blocks drop faster.
+    #[arg(short = 'f', long)]
+    pub fast_autoplay: bool,
+
     /// Feeds a specific seed to the random number generator.
     pub random_seed: Option<u128>,
 }
@@ -572,6 +576,10 @@ fn main() {
                                                 }
                                                 for _ in 0..best_move.rotate_count {
                                                     field.rotate_descending_blocks();
+                                                }
+
+                                                if opts.fast_autoplay {
+                                                    field.hand_descending_blocks_to_gravity();
                                                 }
                                             }
                                         }
